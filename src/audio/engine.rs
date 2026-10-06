@@ -26,8 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Largest block processed in one go; bigger callbacks are split. Scratch buffers use this size.
-const MAX_BLOCK: usize = 4096;
+use crate::dsp::MAX_BLOCK;
 /// Ring capacity per output, in seconds of audio.
 const RING_SECONDS: f64 = 0.5;
 const RETRY_INTERVAL: Duration = Duration::from_secs(1);

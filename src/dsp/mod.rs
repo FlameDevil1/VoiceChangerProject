@@ -7,6 +7,9 @@ pub mod util;
 pub use drift::DriftResampler;
 pub use util::{db_to_gain, gain_to_db, SmoothedValue};
 
+/// Largest block processed in one call; bigger callbacks are split. Scratch buffers use this size.
+pub const MAX_BLOCK: usize = 4096;
+
 /// A mono audio processor in the effect chain.
 ///
 /// Effects added in later build steps (pitch, reverb, ...) implement this. The engine calls
@@ -45,6 +48,13 @@ pub struct CoreParams {
     pub output_gain: f32,
     pub bypass: bool,
     pub mute: bool,
+}
+
+impl Default for CoreParams {
+    /// Unity gain, effects on, not muted.
+    fn default() -> Self {
+        Self { input_gain: 1.0, output_gain: 1.0, bypass: false, mute: false }
+    }
 }
 
 impl EngineCore {

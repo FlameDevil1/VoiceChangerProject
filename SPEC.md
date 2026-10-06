@@ -15,6 +15,7 @@ rendering (and therefore DSP testing) comes early.
 | Noise suppression | `nnnoiseless` (pure-Rust RNNoise, BSD) | 10 ms frames, 48 kHz native, CPU-only. |
 | Internal sample rate | The mic's native rate (48 kHz on almost every Windows device) | WASAPI shared-mode capture only accepts the native format; outputs are opened at the same rate and Windows converts if needed. |
 | Target latency | **≤ 40 ms app-side** in Balanced mode, measured and shown in the UI | See latency budget below. |
+| Target hardware | Ryzen 7 7800X3D + RTX 4070 Super (dev laptop: Ryzen 7 7735HS) | Builds target `x86-64-v3` (AVX2+FMA) so DSP loops vectorise. The GPU makes AI voice conversion realistic as a stretch goal. |
 | AI voice conversion in v1 | **No** | Needs a GPU and adds 100–300 ms. Architecture leaves room for it later. |
 | v1 must-haves | I/O + VB-CABLE, pitch/formant, gate + noise suppression, EQ, compressor/limiter, reverb, robot, radio, presets, hotkeys | |
 
@@ -157,9 +158,18 @@ at the meter frame rate), Test button, tray icon, start minimized, launch on sta
 
 ## 7. File processing (offline)
 
-**Moved up to step 2.** Runs the same `EngineCore` over files, which gives deterministic DSP unit
-tests (golden files, null tests), the Test button, and file export from one code path.
-Decoding via Symphonia (WAV/MP3/FLAC/OGG), WAV via `hound`, MP3 export via LAME (patents expired).
+**Engine done (step 2).** `offline::render` runs the same `EngineCore` over files with the live
+block size, so files sound identical to the virtual mic. One code path serves file export, the
+future Test button and the DSP test harness.
+
+- Decoding: Symphonia (WAV, MP3, FLAC, OGG/Vorbis). Output: WAV, 32-bit float or 16-bit with
+  TPDF dither (`hound`). MP3 export (LAME) comes with the file-processing UI (step 10).
+- `vcrender` CLI: single or batch files, rendered in parallel across all cores; output names are
+  de-duplicated and inputs are never overwritten.
+- Test harness: deterministic generated signals (synthetic vowel with exact pitch/formants,
+  sweep, seeded noise), analysis helpers (RMS, SNR, YIN pitch estimate), golden WAVs in
+  `tests/golden/`, a bypass null test, and a block-size invariance test that every new effect
+  must pass.
 
 ## 8. Settings
 
@@ -186,7 +196,7 @@ should check for VB-CABLE and link to it, not bundle it.
 
 1. ✅ Audio I/O, device selection, pass-through, meters, virtual cable output, drift
    compensation, reconnect, settings, GUI shell.
-2. Offline renderer (`EngineCore` over files) + golden-file test harness.
+2. ✅ Offline renderer (`EngineCore` over files), `vcrender` CLI, golden-file test harness.
 3. Effect chain infrastructure (atomic chain swap, latency compensation, limiter) + pitch/formant.
 4. Core effects: gate, RNNoise, EQ, compressor, reverb, robot, radio.
 5. Modulation sliders (3A).
@@ -202,3 +212,23 @@ should check for VB-CABLE and link to it, not bundle it.
 Unchanged from rev 1 (AI voice conversion, soundboard, ambience, per-app routing, VST plugins,
 pitch-adaptive effects, per-app profiles). Heavy effects such as AI conversion should run on a
 worker thread with larger blocks, fed by its own ring, so they can't stall the capture callback.
+
+### Own virtual audio device (instead of VB-CABLE)
+
+Feasible, but a large, separate project. Replacing VB-CABLE means shipping a **kernel-mode audio
+driver** (e.g. based on Microsoft's SysVAD / SimpleAudioSample): a render endpoint we write to
+and a capture endpoint other apps record from.
+
+- **Signing:** Windows 10/11 loads only Microsoft-signed drivers. That needs an EV code-signing
+  certificate (yearly cost) plus attestation signing through the Partner Center hardware
+  program. Test-signing mode works for development only. Many anti-cheat systems refuse to run
+  with it on, so it is not an option for users.
+- **Risk:** driver bugs blue-screen the machine; Windows updates need re-testing.
+- **Effort:** roughly 1–3 months to a reliable, signed v1 for someone new to drivers, plus
+  ongoing maintenance.
+- **Middle grounds:** license VB-CABLE for redistribution from VB-Audio; or an APO (audio
+  processing object) on the real mic, which avoids a virtual device but has its own signing
+  and install hurdles.
+
+Decision: keep VB-CABLE for v1. Outputs are already abstract (`OutputSink`), so a custom driver
+can be swapped in later without touching the DSP. Revisit if the app becomes a paid product.

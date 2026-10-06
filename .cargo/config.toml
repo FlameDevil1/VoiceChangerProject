@@ -1,0 +1,5 @@
+# AVX2 + FMA (x86-64-v3): every Ryzen and Intel Core since ~2015, including the target
+# 7800X3D. Lets the compiler vectorise DSP loops. CPUs without AVX2 (old Pentium/Celeron,
+# pre-2013 Core) cannot run these builds; drop this line for a fully generic build.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
