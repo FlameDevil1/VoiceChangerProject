@@ -1,0 +1,39 @@
+[package]
+name = "voice-changer"
+version = "0.1.0"
+edition = "2024"
+description = "Real-time voice changer for Windows with virtual microphone output"
+license = "MIT"
+
+[lib]
+name = "voice_changer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "voicechanger"
+path = "src/main.rs"
+
+[dependencies]
+# `realtime` registers the audio threads with MMCSS ("Pro Audio") on Windows.
+cpal = { version = "0.18.2", features = ["realtime"] }
+# glow (OpenGL) is much lighter than wgpu; no persistence/serde features needed.
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "accesskit", "links"] }
+log = "0.4.34"
+rtrb = "0.4.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+# Keep unwinding: audio callbacks use catch_unwind to fail safe instead of aborting.
+panic = "unwind"
+
+# DSP code is unusably slow unoptimised; keep debug builds responsive.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+opt-level = 1
