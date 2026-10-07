@@ -212,7 +212,7 @@ impl App {
                     let button = egui::Button::new(text).selected(capturing).min_size(egui::vec2(150.0, 0.0));
                     if ui
                         .add(button)
-                        .on_hover_text("Click, then press the key combination. Esc cancels, Backspace clears.")
+                        .on_hover_text("Click, then press a key combination or a mouse side/middle button. Esc cancels, Backspace clears.")
                         .clicked()
                     {
                         self.system.capturing = Some(action);

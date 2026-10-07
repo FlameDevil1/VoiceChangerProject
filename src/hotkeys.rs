@@ -11,6 +11,11 @@
 //! Both feed the same `Matcher`, so each press is handled exactly once, a key pressed in our
 //! window and released in a game still pairs up, and recording a new hotkey in settings works.
 //!
+//! **Mouse buttons** (middle, side buttons 4/5) can be bound too, as virtual keys 0x04–0x06.
+//! A system-wide mouse hook runs on every mouse movement, so it is installed only while a binding
+//! uses a mouse button (or a binding is being recorded). Each mouse event is handled by exactly one
+//! path, chosen by where the cursor is: over our window, the thread hook; elsewhere, the global one.
+//!
 //! Limitation (Windows rule): hooks don't see keys while an app running as administrator is
 //! focused, unless this app runs as administrator too.
 
@@ -111,6 +116,11 @@ impl Default for HotkeyConfig {
 }
 
 impl HotkeyConfig {
+    /// True if any binding uses a mouse button (so the mouse hook is needed).
+    pub fn uses_mouse(&self) -> bool {
+        self.enabled && self.bindings.values().any(|k| is_mouse_vk(k.vk))
+    }
+
     /// Another action already using `key`, if any (the UI warns before reassigning).
     pub fn conflict(&self, key: &Hotkey, except: Action) -> Option<Action> {
         self.bindings.iter().find(|(a, k)| **a != except && *k == key).map(|(a, _)| *a)
@@ -239,9 +249,17 @@ impl Matcher {
     }
 }
 
+/// Middle, side button 4 or side button 5.
+pub fn is_mouse_vk(vk: u16) -> bool {
+    (0x04..=0x06).contains(&vk)
+}
+
 /// Human-readable name for a virtual-key code (US layout labels for punctuation).
 pub fn key_name(vk: u16) -> String {
     let named = match vk {
+        0x04 => "Middle mouse",
+        0x05 => "Mouse 4",
+        0x06 => "Mouse 5",
         0x08 => "Backspace",
         0x09 => "Tab",
         0x0D => "Enter",
@@ -306,7 +324,7 @@ mod hook {
     use std::sync::Mutex;
     use std::sync::mpsc;
     use std::thread::JoinHandle;
-    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -314,6 +332,14 @@ mod hook {
         KBDLLHOOKSTRUCT, MSG, PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
         WH_KEYBOARD, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MOUSEHOOKSTRUCTEX, MSLLHOOKSTRUCT, WH_MOUSE, WH_MOUSE_LL, WM_APP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_XBUTTONDOWN,
+        WM_XBUTTONUP, WindowFromPoint,
+    };
+
+    /// Thread message asking the hook thread to install (wparam 1) or remove (0) the mouse hook.
+    const WM_MOUSE_HOOK: u32 = WM_APP + 7;
+    const XBUTTON1: u32 = 1;
 
     type Emit = Box<dyn FnMut(Event) + Send>;
 
@@ -354,6 +380,61 @@ mod hook {
         unsafe { CallNextHookEx(None, code, wparam, lparam) }
     }
 
+    /// Mouse button message -> (virtual key, pressed). `xbutton` is HIWORD of mouseData.
+    fn mouse_vk(msg: u32, xbutton: u32) -> Option<(u16, bool)> {
+        match msg {
+            WM_MBUTTONDOWN => Some((0x04, true)),
+            WM_MBUTTONUP => Some((0x04, false)),
+            WM_XBUTTONDOWN | WM_XBUTTONUP => {
+                Some((if xbutton == XBUTTON1 { 0x05 } else { 0x06 }, msg == WM_XBUTTONDOWN))
+            }
+            _ => None,
+        }
+    }
+
+    fn feed(vk: u16, down: bool) {
+        if let Ok(mut guard) = STATE.lock()
+            && let Some((matcher, emit)) = guard.as_mut()
+        {
+            matcher.key(vk, down, emit.as_mut());
+        }
+    }
+
+    /// Cursor over one of our windows: the thread mouse hook handles that event.
+    fn cursor_over_own_window(pt: POINT) -> bool {
+        // SAFETY: plain queries.
+        unsafe {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(WindowFromPoint(pt), Some(&mut pid));
+            pid == GetCurrentProcessId()
+        }
+    }
+
+    unsafe extern "system" fn mouse_ll_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        // Movement is the overwhelmingly common case: return as fast as possible.
+        if code == HC_ACTION as i32 {
+            // SAFETY: for WH_MOUSE_LL with HC_ACTION, lparam points to an MSLLHOOKSTRUCT.
+            let ms = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
+            if let Some((vk, down)) = mouse_vk(wparam.0 as u32, ms.mouseData >> 16)
+                && !cursor_over_own_window(ms.pt)
+            {
+                feed(vk, down);
+            }
+        }
+        unsafe { CallNextHookEx(None, code, wparam, lparam) }
+    }
+
+    unsafe extern "system" fn mouse_thread_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if code == HC_ACTION as i32 {
+            // SAFETY: for WH_MOUSE, lparam points to a MOUSEHOOKSTRUCTEX (EX on Windows 2000+).
+            let ms = unsafe { &*(lparam.0 as *const MOUSEHOOKSTRUCTEX) };
+            if let Some((vk, down)) = mouse_vk(wparam.0 as u32, ms.mouseData >> 16) {
+                feed(vk, down);
+            }
+        }
+        unsafe { CallNextHookEx(None, code, wparam, lparam) }
+    }
+
     /// Our window has focus: the thread hook handles keys (see module docs).
     fn own_window_in_front() -> bool {
         // SAFETY: plain queries; a null window yields pid 0.
@@ -368,8 +449,9 @@ mod hook {
     pub struct HotkeyService {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
-        /// Thread hook on the window thread (keys while our own window is focused).
+        /// Thread hooks on the window thread (keys/mouse while our own window is focused).
         window_hook: Option<HHOOK>,
+        window_mouse_hook: Option<HHOOK>,
     }
 
     impl HotkeyService {
@@ -388,9 +470,34 @@ mod hook {
                         let _ = tx.send(hook.as_ref().ok().map(|_| GetCurrentThreadId()));
                         let Ok(hook) = hook else { return };
                         let mut msg = MSG::default();
+                        let mut mouse: Option<HHOOK> = None;
                         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                            if msg.hwnd.is_invalid() && msg.message == WM_MOUSE_HOOK {
+                                match (msg.wParam.0 != 0, mouse) {
+                                    (true, None) => {
+                                        mouse = SetWindowsHookExW(
+                                            WH_MOUSE_LL,
+                                            Some(mouse_ll_proc),
+                                            module.map(Into::into),
+                                            0,
+                                        )
+                                        .ok();
+                                        log::info!("mouse hook {}", if mouse.is_some() { "on" } else { "failed" });
+                                    }
+                                    (false, Some(h)) => {
+                                        let _ = UnhookWindowsHookEx(h);
+                                        mouse = None;
+                                        log::info!("mouse hook off");
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
                             let _ = TranslateMessage(&msg);
                             DispatchMessageW(&msg);
+                        }
+                        if let Some(h) = mouse {
+                            let _ = UnhookWindowsHookEx(h);
                         }
                         let _ = UnhookWindowsHookEx(hook);
                     }
@@ -398,13 +505,17 @@ mod hook {
                 .ok()?;
             match rx.recv() {
                 Ok(Some(thread_id)) => {
-                    // SAFETY: thread hook for the calling (window) thread, removed in Drop.
-                    let window_hook =
-                        unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(thread_proc), None, GetCurrentThreadId()) }.ok();
+                    // SAFETY: thread hooks for the calling (window) thread, removed in Drop.
+                    let tid = unsafe { GetCurrentThreadId() };
+                    let window_hook = unsafe { SetWindowsHookExW(WH_KEYBOARD, Some(thread_proc), None, tid) }.ok();
+                    let window_mouse_hook =
+                        unsafe { SetWindowsHookExW(WH_MOUSE, Some(mouse_thread_proc), None, tid) }.ok();
                     if window_hook.is_none() {
                         log::warn!("hotkeys won't work while this window is focused (thread hook failed)");
                     }
-                    Some(Self { thread_id, thread: Some(thread), window_hook })
+                    let service = Self { thread_id, thread: Some(thread), window_hook, window_mouse_hook };
+                    service.update_mouse_hook();
+                    Some(service)
                 }
                 _ => {
                     log::warn!("global hotkeys unavailable: keyboard hook could not be installed");
@@ -420,6 +531,20 @@ mod hook {
             {
                 m.config = config;
             }
+            self.update_mouse_hook();
+        }
+
+        /// Install the global mouse hook only while it is needed.
+        fn update_mouse_hook(&self) {
+            let needed = STATE
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|(m, _)| m.capture || m.config.uses_mouse()))
+                .unwrap_or(false);
+            // SAFETY: posting a thread message to our own hook thread.
+            unsafe {
+                let _ = PostThreadMessageW(self.thread_id, WM_MOUSE_HOOK, WPARAM(needed as usize), LPARAM(0));
+            }
         }
 
         /// Capture the next key combination for the settings UI (reported as `Event::Captured`).
@@ -429,6 +554,7 @@ mod hook {
             {
                 m.capture = on;
             }
+            self.update_mouse_hook();
         }
     }
 
@@ -436,7 +562,7 @@ mod hook {
         fn drop(&mut self) {
             // SAFETY: removing our own hook; posting WM_QUIT to our hook thread ends its loop.
             unsafe {
-                if let Some(h) = self.window_hook.take() {
+                for h in [self.window_hook.take(), self.window_mouse_hook.take()].into_iter().flatten() {
                     let _ = UnhookWindowsHookEx(h);
                 }
                 let _ = PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
@@ -510,6 +636,24 @@ mod tests {
         assert_eq!(feed(&mut m, &[(SHIFT, false), (0x1B, true)]), vec![Event::CaptureCancelled]);
         m.capture = true;
         assert_eq!(feed(&mut m, &[(0x1B, false), (0x08, true)]), vec![Event::Captured(None)]);
+    }
+
+    #[test]
+    fn mouse_buttons_bind_like_keys() {
+        let mut cfg = HotkeyConfig::default();
+        assert!(!cfg.uses_mouse());
+        cfg.bindings
+            .insert(Action::HoldEffects, Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: 0x05 });
+        assert!(cfg.uses_mouse());
+        assert_eq!(key_name(0x05), "Mouse 4");
+        let mut m = Matcher::new(cfg);
+        let ev = feed(&mut m, &[(0x05, true), (0x05, false)]);
+        assert_eq!(ev, vec![Event::Pressed(Action::HoldEffects), Event::Released(Action::HoldEffects)]);
+        m.capture = true;
+        assert_eq!(
+            feed(&mut m, &[(0x06, true)]),
+            vec![Event::Captured(Some(Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: 0x06 }))]
+        );
     }
 
     #[test]
