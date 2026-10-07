@@ -28,13 +28,20 @@ rtrb = "0.4.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 symphonia = { version = "0.6.1", default-features = false, features = ["wav", "pcm", "flac", "mp3", "ogg", "vorbis", "adpcm"] }
+# System tray icon and menu (MIT/Apache-2.0). Linux-only defaults (GTK) disabled.
+tray-icon = { version = "0.26.0", default-features = false }
 
 # Win32 APIs (single instance, hotkeys, tray). Same version cpal uses, so it compiles once.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
+    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]

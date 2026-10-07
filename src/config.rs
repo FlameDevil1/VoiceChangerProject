@@ -1,6 +1,7 @@
 //! Settings persisted to `%APPDATA%\VoiceChanger\config.json`.
 
 use crate::dsp::FxSettings;
+use crate::hotkeys::HotkeyConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -87,6 +88,12 @@ pub struct Config {
     /// Last loaded preset (shown with "*" once modified).
     pub preset: Option<String>,
     pub ui_mode: UiMode,
+    pub hotkeys: HotkeyConfig,
+    /// Closing the window hides it to the tray instead of quitting.
+    pub close_to_tray: bool,
+    pub start_minimized: bool,
+    /// The "still running in the tray" hint has been shown once.
+    pub tray_hint_shown: bool,
 }
 
 impl Default for Config {
@@ -108,6 +115,10 @@ impl Default for Config {
             fx: FxSettings::default(),
             preset: Some("Normal".to_string()),
             ui_mode: UiMode::Simple,
+            hotkeys: HotkeyConfig::default(),
+            close_to_tray: true,
+            start_minimized: false,
+            tray_hint_shown: false,
         }
     }
 }

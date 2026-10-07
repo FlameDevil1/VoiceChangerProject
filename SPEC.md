@@ -228,10 +228,28 @@ As specified, plus:
 - Effect order is adjustable (arrows per effect, "Reset order"); reordering swaps the chain live
   with a crossfade.
 
-## 5. Hotkeys and quick controls
+## 5. Hotkeys and quick controls: **done (step 6)**
 
-As specified. Push-to-talk "effect while held" needs key-up events, so it uses a low-level
-keyboard hook (`WH_KEYBOARD_LL`); toggles can use `RegisterHotKey`.
+- **Global hotkeys** (customisable, conflicts resolved by moving the key): effects on/off
+  (Ctrl+Alt+V), effects while held (unset by default), panic / normal voice (Ctrl+Alt+N),
+  next/previous preset (Ctrl+Alt+Page Down / Page Up), mute (Ctrl+Alt+M), show window (unset).
+- **Two hooks, one matcher**: a passive low-level hook (`WH_KEYBOARD_LL`) sees keys while other
+  apps are focused, including press *and* release for hold-to-use; it never blocks keys. Windows
+  doesn't call it while our own window is focused, so a thread-local `WH_KEYBOARD` hook on the
+  window thread covers that. Both feed one state machine: each press is handled once, auto-repeat
+  is ignored, and a key pressed in our window and released in a game still pairs up. (An earlier
+  egui-based fallback was dropped: egui turns Ctrl+C/X/V into clipboard commands and loses keys.)
+- Audio-state actions (toggle, hold, panic, mute) are applied on the hook thread through the
+  shared atomics, so they're instant even if the UI is busy or hidden.
+- Recording a binding: click it, press the combination (Esc cancels, Backspace clears).
+  Assigning a hold key switches effects off at once (push-to-talk semantics).
+- **Tray icon** (drawn in code, also the window icon): left click shows the window; menu with
+  Show, Effects on, Mute, Voice → presets, Quit; tooltip shows the current state.
+- **Close to tray** (default on, first time shows a hint), **start hidden in the tray**.
+- **Toasts**: a small Win32 overlay (no focus, click-through, sized to its text) shows the preset
+  or state after hotkey/tray actions, even while the window is hidden. Not visible over
+  exclusive-fullscreen games (an OS limitation); fine over borderless/windowed.
+- Limitation: hooks don't see keys while an app running as administrator is focused.
 
 ## 6. User interface
 
@@ -239,8 +257,8 @@ Done: single window, dark/light/system theme, device and level panels (step 1).
 **Simple / Advanced modes (step 5)**: Simple shows devices, levels, a preset button grid, bypass,
 mute, quick noise-suppression/gate toggles and volume; Advanced adds input gain, mic channel,
 preset management, every effect panel with ordering, and latency/performance details.
-Later: Test button, spectrum visualizer (FFT on the UI side from a ring copy, capped at the meter
-frame rate), tray icon, start minimized, launch on startup.
+Tray icon, close to tray and start hidden: done (step 6). Later: Test button, spectrum visualizer (FFT on the UI side from a ring copy, capped at the meter
+frame rate), launch on Windows startup (with the installer).
 
 ## 7. File processing (offline)
 
@@ -301,7 +319,8 @@ should check for VB-CABLE and link to it, not bundle it.
    effect panels; zero-allocation audio path enforced by a test.
 5. ✅ Presets (built-in + user, import/export), Simple/Advanced modes, effect reordering,
    runtime CPU dispatch, GUI split into modules, CI workflow.
-6. Global hotkeys, tray icon, toasts.
+6. ✅ Global hotkeys (hold-to-use, panic, presets, mute), tray icon, toasts, close to tray,
+   single instance, monitoring safety warning, 10 ms noise suppression.
 7. Test button (record 5 s, play back processed), visualizer, other UI polish.
 8. Modulation sliders (3A).
 9. Bad mic / bad connection (3B), scenario presets, monitor tap point.

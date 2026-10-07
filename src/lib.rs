@@ -6,6 +6,7 @@
 pub mod audio;
 pub mod config;
 pub mod dsp;
+pub mod hotkeys;
 pub mod logging;
 pub mod offline;
 pub mod presets;

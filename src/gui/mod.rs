@@ -7,7 +7,10 @@
 //! **Advanced** (every control, effect order, preset management).
 
 mod effects;
+pub mod icon;
 mod presets;
+mod system;
+mod tray;
 mod widgets;
 
 use eframe::egui::{self, RichText};
@@ -41,6 +44,8 @@ pub struct App {
     last_meter_update: Instant,
     presets: PresetStore,
     preset_ui: presets::PresetUi,
+    /// Tray, hotkeys and toasts.
+    system: system::System,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -64,7 +69,12 @@ impl App {
         shared.fx.store(&cfg.fx);
 
         let ctx = cc.egui_ctx.clone();
+        let system = system::System::start(&cc.egui_ctx, shared.clone(), cfg.hotkeys.clone());
         let engine = EngineHandle::spawn(shared, Box::new(move || ctx.request_repaint()));
+        if cfg.start_minimized && system.tray.is_none() {
+            // Hidden with no tray icon would leave no way back in.
+            bring_to_front(&cc.egui_ctx);
+        }
         apply_theme(&cc.egui_ctx, cfg.theme);
         log::info!("DSP SIMD level: {}", simd::level().label());
 
@@ -82,6 +92,7 @@ impl App {
             last_meter_update: Instant::now(),
             presets: PresetStore::load(&PresetStore::default_dir()),
             preset_ui: Default::default(),
+            system,
             _instance: instance,
         }
     }
@@ -135,6 +146,18 @@ impl App {
         self.engine.send(Command::SetMonitor { device: self.cfg.monitor.clone(), enabled: self.cfg.monitor_enabled });
     }
 
+    /// Debounced config save (also runs while the window is hidden).
+    fn save_if_due(&mut self, ctx: &egui::Context) {
+        if let Some(t) = self.dirty_since {
+            if t.elapsed() > Duration::from_secs(1) {
+                self.cfg.save();
+                self.dirty_since = None;
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(1100));
+            }
+        }
+    }
+
     /// Background bookkeeping done once per frame.
     fn tick(&mut self, ctx: &egui::Context) {
         self.status = self.engine.status();
@@ -162,16 +185,6 @@ impl App {
             self.engine.send(Command::RefreshDevices);
         }
         self.was_focused = focused;
-
-        // Debounced config save.
-        if let Some(t) = self.dirty_since {
-            if t.elapsed() > Duration::from_secs(1) {
-                self.cfg.save();
-                self.dirty_since = None;
-            } else {
-                ctx.request_repaint_after(Duration::from_millis(1100));
-            }
-        }
 
         // eframe skips this function entirely while minimized or fully covered, so meters cost
         // nothing then. In the background (e.g. next to a game) a lower rate is plenty.
@@ -572,8 +585,14 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Runs before every frame and on wake-ups while hidden (hotkeys, tray).
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.background(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.intercept_close(&ctx);
         self.tick(&ctx);
         let advanced = self.cfg.ui_mode == UiMode::Advanced;
         egui::CentralPanel::default().show(ui, |ui| {
@@ -586,6 +605,7 @@ impl eframe::App for App {
                     self.controls_section(ui, true);
                     self.preset_manager(ui);
                     self.effects_section(ui);
+                    self.system_section(ui);
                     self.performance_section(ui);
                 } else {
                     self.preset_grid(ui);

@@ -3,9 +3,10 @@
 Real-time voice changer for Windows 10/11 that feeds a virtual microphone (VB-CABLE), so
 Discord, games, OBS and Zoom hear the processed voice.
 
-**Status: steps 1–5 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
+**Status: steps 1–6 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
 output, offline renderer, limiter, eight effects (noise suppression, noise gate, pitch & formant,
-robot, equalizer, compressor, reverb, radio/telephone), presets, and Simple/Advanced modes.
+robot, equalizer, compressor, reverb, radio/telephone), presets, Simple/Advanced modes, global
+hotkeys and a tray icon.
 
 ## Requirements
 
@@ -34,6 +35,9 @@ The binary is `target/release/voicechanger.exe`.
 5. Optional: tick **Hear myself** to monitor through your headphones.
 6. Pick a voice in **Simple** mode, or switch to **Advanced** to tweak effects and save your
    own presets (stored in `%APPDATA%\VoiceChanger\presets`, shareable via Export/Import).
+7. Hotkeys work while gaming: **Ctrl+Alt+V** effects on/off, **Ctrl+Alt+Page Down/Up** next or
+   previous preset, **Ctrl+Alt+N** normal voice, **Ctrl+Alt+M** mute. Change them, or add a
+   hold-to-use key, under Advanced → Hotkeys & tray. Closing the window keeps it in the tray.
 
 Settings and logs live in `%APPDATA%\VoiceChanger\`.
 
@@ -98,5 +102,8 @@ Layout:
 | `tests/golden.rs` | Golden-file regression harness |
 | `src/gui/` | egui window: `mod.rs` (layout, sections), `effects.rs`, `presets.rs`, `widgets.rs` |
 | `src/presets.rs` | Built-in presets, user preset store (save/rename/delete/import/export) |
+| `src/hotkeys.rs` | Hotkey bindings, key matcher, Windows keyboard hooks |
+| `src/toast.rs`, `src/single_instance.rs` | On-screen toast (Win32), one-instance guard |
+| `src/gui/tray.rs`, `src/gui/system.rs` | Tray icon/menu; hotkey/tray handling and settings |
 | `src/dsp/simd.rs` | Runtime CPU feature dispatch (AVX2 when available) |
 | `SPEC.md` | Full spec, architecture and latency budget |

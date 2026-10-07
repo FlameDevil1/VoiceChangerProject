@@ -3,6 +3,7 @@
 
 mod gui;
 mod single_instance;
+mod toast;
 
 use eframe::egui;
 use single_instance::Instance;
@@ -24,7 +25,9 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Voice Changer")
             .with_inner_size([460.0, 860.0])
-            .with_min_inner_size([380.0, 420.0]),
+            .with_min_inner_size([380.0, 420.0])
+            .with_icon(egui::IconData { rgba: gui::icon::rgba(64), width: 64, height: 64 })
+            .with_visible(!cfg.start_minimized),
         // Measured: glow uses ~25% of the memory of wgpu for the same CPU cost.
         renderer: eframe::Renderer::Glow,
         multisampling: 0,
