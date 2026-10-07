@@ -54,6 +54,10 @@ pub struct App {
     ctx: egui::Context,
     spectrum: spectrum::Spectrum,
     test: test_voice::TestVoice,
+    /// Windows privacy settings block the microphone (checked on start and focus).
+    mic_blocked: bool,
+    /// How long the running mic has delivered exact digital silence.
+    silent_for: f32,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -84,6 +88,7 @@ impl App {
             bring_to_front(&cc.egui_ctx);
         }
         apply_theme(&cc.egui_ctx, cfg.theme);
+        cc.egui_ctx.set_zoom_factor(cfg.ui_scale.clamp(0.5, 3.0));
         log::info!("DSP SIMD level: {}", simd::level().label());
 
         let auto_start_pending = cfg.was_running;
@@ -105,6 +110,8 @@ impl App {
             ctx: cc.egui_ctx.clone(),
             spectrum: Default::default(),
             test: Default::default(),
+            mic_blocked: voice_changer::audio::privacy::microphone_blocked(),
+            silent_for: 0.0,
             _instance: instance,
         }
     }
@@ -174,6 +181,13 @@ impl App {
     fn tick(&mut self, ctx: &egui::Context) {
         self.status = self.engine.status();
 
+        // Keyboard zoom (Ctrl+= / Ctrl+-) is built into egui; remember whatever size is in use.
+        let zoom = ctx.zoom_factor();
+        if (zoom - self.cfg.ui_scale).abs() > 1e-3 {
+            self.cfg.ui_scale = zoom;
+            self.mark_dirty();
+        }
+
         // First run: pick the virtual cable automatically if one is installed.
         if !self.cfg.cable_choice_made {
             let first_cable = self.status.devices.cables().next().cloned();
@@ -195,6 +209,7 @@ impl App {
         if focused && (!self.was_focused || self.last_refresh.elapsed() > DEVICE_REFRESH) {
             self.last_refresh = Instant::now();
             self.engine.send(Command::RefreshDevices);
+            self.mic_blocked = voice_changer::audio::privacy::microphone_blocked();
         }
         self.was_focused = focused;
 
@@ -204,7 +219,10 @@ impl App {
             let dt = self.last_meter_update.elapsed().as_secs_f32().min(0.25);
             self.last_meter_update = Instant::now();
             let sh = &self.engine.shared;
-            self.meters[0].update(sh.in_peak.take(), dt);
+            let in_peak = sh.in_peak.take();
+            // Real microphones always have some noise; exact zeros mean muted or blocked.
+            self.silent_for = if in_peak == 0.0 { self.silent_for + dt } else { 0.0 };
+            self.meters[0].update(in_peak, dt);
             self.meters[1].update(sh.out_peak.take(), dt);
             self.meters[2].update(sh.monitor.peak.take(), dt);
             let load = sh.load.take();
@@ -365,8 +383,26 @@ impl App {
                 }
             }
 
+            self.mic_warning(ui);
             self.cable_indicator(ui);
         });
+    }
+
+    /// Microphone blocked by Windows privacy settings, or delivering pure silence.
+    fn mic_warning(&mut self, ui: &mut egui::Ui) {
+        let silent = self.is_active() && self.silent_for > 3.0;
+        if !self.mic_blocked && !silent {
+            return;
+        }
+        let text = if self.mic_blocked {
+            "⚠ Windows is blocking microphone access for desktop apps, so this app only hears silence."
+        } else {
+            "⚠ Your microphone is sending complete silence. It may be muted (check its switch or Windows Sound settings), or blocked in Windows privacy settings."
+        };
+        ui.colored_label(AMBER, text);
+        if ui.button("Open microphone privacy settings").clicked() {
+            voice_changer::audio::privacy::open_privacy_settings();
+        }
     }
 
     /// Shows which device is being fed, or a setup helper when no virtual cable is installed.
@@ -538,6 +574,23 @@ impl App {
             })
             .response
             .on_hover_text("Low = least delay, Safe = most headroom. Grows automatically if audio glitches.");
+
+            ui.horizontal(|ui| {
+                ui.label("Interface size");
+                let current = self.cfg.ui_scale;
+                egui::ComboBox::from_id_salt("ui-scale").selected_text(format!("{:.0} %", current * 100.0)).show_ui(
+                    ui,
+                    |ui| {
+                        for s in [0.8f32, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0] {
+                            if ui.selectable_label((s - current).abs() < 0.01, format!("{:.0} %", s * 100.0)).clicked()
+                            {
+                                ui.ctx().set_zoom_factor(s);
+                            }
+                        }
+                    },
+                );
+                ui.label(RichText::new("or Ctrl+= / Ctrl+- / Ctrl+0").small().weak());
+            });
 
             if ui
                 .checkbox(&mut self.cfg.low_power_ui, "Low-power UI")

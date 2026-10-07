@@ -4,6 +4,7 @@
 pub mod devices;
 pub mod engine;
 pub mod playback;
+pub mod privacy;
 pub mod shared;
 
 pub use devices::{DeviceInfo, DeviceList};

@@ -96,6 +96,8 @@ pub struct Config {
     pub tray_hint_shown: bool,
     /// Live spectrum under the level meters.
     pub show_spectrum: bool,
+    /// Interface size (1.0 = 100 %). Also changed with Ctrl+= / Ctrl+- / Ctrl+0.
+    pub ui_scale: f32,
 }
 
 impl Default for Config {
@@ -122,6 +124,7 @@ impl Default for Config {
             start_minimized: false,
             tray_hint_shown: false,
             show_spectrum: true,
+            ui_scale: 1.0,
         }
     }
 }
