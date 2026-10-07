@@ -3,8 +3,9 @@
 Real-time voice changer for Windows 10/11 that feeds a virtual microphone (VB-CABLE), so
 Discord, games, OBS and Zoom hear the processed voice.
 
-**Status: steps 1–2 of the [build order](SPEC.md#build-order).** The audio pipeline, device
-handling, virtual cable output, GUI shell and offline file renderer work; voice effects come next.
+**Status: steps 1–3 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
+output, GUI, offline renderer, effect chain, limiter and pitch/formant shifting work. More effects
+come next.
 
 ## Requirements
 
@@ -50,6 +51,7 @@ real output with the voice muted.
 ```bash
 cargo run --release --bin vcrender -- voice.mp3              # -> voice_vc.wav
 cargo run --release --bin vcrender -- *.wav -o out --pcm16   # batch, parallel
+cargo run --release --bin vcrender -- in.wav --pitch -5 --formant -3   # deeper voice
 ```
 
 ## Tests
@@ -65,6 +67,10 @@ VC_UPDATE_GOLDEN=1 cargo test --test golden
 
 Render speed: `cargo test --release --test golden -- --ignored --nocapture`.
 
+Pitch diagnostics: `cargo run --release --example pitch_diag` (pitch accuracy, formant movement,
+loudness), `--example formant_diag` (formant peak table), and
+`--example speech_check -- speech.wav [out_dir]` (frame-by-frame accuracy on a real recording).
+
 Layout:
 
 | Path | What |
@@ -73,7 +79,10 @@ Layout:
 | `src/audio/shared.rs` | Lock-free state shared between audio, controller and UI |
 | `src/audio/devices.rs` | Enumeration, device lookup, virtual cable detection |
 | `src/dsp/drift.rs` | Clock-drift-compensating resampler |
-| `src/dsp/mod.rs` | `EngineCore` (per-block processing) and the `Processor` trait for effects |
+| `src/dsp/mod.rs` | `EngineCore` (gain, chain, bypass, limiter) and the `Processor` trait |
+| `src/dsp/chain.rs` | Effect slots, chain, `FxSettings` (serialisable) / `FxParams` (atomic) |
+| `src/dsp/pitch.rs` | YIN tracker and causal PSOLA pitch/formant shifter |
+| `src/dsp/limiter.rs` | Lookahead brickwall limiter |
 | `src/offline/` | File I/O, offline render, test signals, analysis (RMS, SNR, pitch) |
 | `src/bin/vcrender.rs` | Command-line file renderer |
 | `tests/golden.rs` | Golden-file regression harness |

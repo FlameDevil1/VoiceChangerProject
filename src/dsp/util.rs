@@ -8,6 +8,96 @@ pub fn gain_to_db(gain: f32) -> f32 {
     20.0 * gain.max(1e-6).log10()
 }
 
+/// Flush denormals to zero on the calling thread (x86 MXCSR FTZ + DAZ).
+///
+/// Decaying signals (filter and reverb tails) produce denormal floats, which are up to ~100x
+/// slower on x86. Called at the top of every audio callback and offline render, so live and file
+/// output stay bit-identical.
+#[inline]
+pub fn enable_ftz() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let mut csr: u32 = 0;
+        std::arch::asm!("stmxcsr [{}]", in(reg) &mut csr, options(nostack));
+        csr |= 0x8040; // FTZ (bit 15) | DAZ (bit 6)
+        std::arch::asm!("ldmxcsr [{}]", in(reg) &csr, options(nostack, readonly));
+    }
+}
+
+/// Fixed delay line (allocated up front, real-time safe).
+#[derive(Clone, Debug)]
+pub struct DelayLine {
+    buf: Vec<f32>,
+    pos: usize,
+}
+
+impl DelayLine {
+    pub fn new(delay: usize) -> Self {
+        Self { buf: vec![0.0; delay], pos: 0 }
+    }
+
+    pub fn delay(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Push one sample, return the sample from `delay` samples ago.
+    #[inline]
+    pub fn process(&mut self, x: f32) -> f32 {
+        if self.buf.is_empty() {
+            return x;
+        }
+        let y = std::mem::replace(&mut self.buf[self.pos], x);
+        self.pos += 1;
+        if self.pos == self.buf.len() {
+            self.pos = 0;
+        }
+        y
+    }
+
+    pub fn reset(&mut self) {
+        self.buf.fill(0.0);
+        self.pos = 0;
+    }
+}
+
+/// Raised-cosine (Hann) window lookup: `w(u) = 0.5 (1 + cos(pi u))` for |u| < 1, else 0.
+/// A table with linear interpolation is ~10x cheaper than `cos` per sample, error < 1e-6.
+#[derive(Clone, Debug)]
+pub struct HannTable {
+    table: Vec<f32>,
+}
+
+impl HannTable {
+    const SIZE: usize = 1024;
+
+    pub fn new() -> Self {
+        let table = (0..=Self::SIZE + 1)
+            .map(|i| {
+                let u = (i as f64 / Self::SIZE as f64).min(1.0);
+                (0.5 * (1.0 + (std::f64::consts::PI * u).cos())) as f32
+            })
+            .collect();
+        Self { table }
+    }
+
+    #[inline]
+    pub fn at(&self, u: f32) -> f32 {
+        let x = u.abs() * Self::SIZE as f32;
+        if x >= Self::SIZE as f32 {
+            return 0.0;
+        }
+        let i = x as usize;
+        let f = x - i as f32;
+        self.table[i] + (self.table[i + 1] - self.table[i]) * f
+    }
+}
+
+impl Default for HannTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A parameter that ramps linearly to its target over a fixed time, to avoid zipper noise
 /// and clicks when sliders or toggles change.
 #[derive(Clone, Debug)]
@@ -40,6 +130,12 @@ impl SmoothedValue {
 
     pub fn current(&self) -> f32 {
         self.current
+    }
+
+    /// Jump to the target immediately (no ramp).
+    pub fn snap(&mut self) {
+        self.current = self.target;
+        self.remaining = 0;
     }
 
     pub fn is_settled(&self) -> bool {

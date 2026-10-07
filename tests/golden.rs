@@ -9,7 +9,8 @@
 //!   `VC_UPDATE_GOLDEN=1 cargo test --test golden`.
 
 use std::path::PathBuf;
-use voice_changer::dsp::CoreParams;
+use voice_changer::dsp::chain::PitchSettings;
+use voice_changer::dsp::{CoreParams, FxSettings};
 use voice_changer::offline::{self, analysis, signals, WavFormat};
 
 const RATE: u32 = 48_000;
@@ -20,20 +21,47 @@ struct Case {
     name: &'static str,
     input: fn() -> Vec<f32>,
     params: CoreParams,
+    fx: FxSettings,
+}
+
+fn pitch(semitones: f32, formant: f32) -> FxSettings {
+    FxSettings { pitch: PitchSettings { enabled: true, semitones, formant, ..Default::default() }, ..Default::default() }
 }
 
 fn cases() -> Vec<Case> {
     let unity = CoreParams::default();
+    let none = FxSettings::default;
     vec![
-        Case { name: "passthrough_vowel", input: || signals::vowel(RATE, 0.5, 140.0), params: unity },
+        Case { name: "passthrough_vowel", input: || signals::vowel(RATE, 0.5, 140.0), params: unity, fx: none() },
         Case {
             name: "gain_sweep",
             input: || signals::sweep(RATE, 0.5, 40.0, 16_000.0),
             params: CoreParams { input_gain: 0.5, output_gain: 1.5, ..unity },
+            fx: none(),
         },
-        Case { name: "bypass_noise", input: || signals::noise(RATE, 0.25, 0.3, 1), params: CoreParams { bypass: true, ..unity } },
-        Case { name: "mute_vowel", input: || signals::vowel(RATE, 0.25, 200.0), params: CoreParams { mute: true, ..unity } },
-        // Effects added in later steps get their cases here (pitch_up_vowel, robot_vowel, ...).
+        Case {
+            name: "bypass_noise",
+            input: || signals::noise(RATE, 0.25, 0.3, 1),
+            params: CoreParams { bypass: true, ..unity },
+            fx: pitch(7.0, 0.0),
+        },
+        Case {
+            name: "mute_vowel",
+            input: || signals::vowel(RATE, 0.25, 200.0),
+            params: CoreParams { mute: true, ..unity },
+            fx: none(),
+        },
+        Case {
+            name: "limiter_hot_sweep",
+            input: || signals::sweep(RATE, 0.5, 60.0, 8_000.0),
+            params: CoreParams { input_gain: 4.0, ..unity },
+            fx: none(),
+        },
+        Case { name: "pitch_up7_vowel", input: || signals::vowel(RATE, 0.6, 140.0), params: unity, fx: pitch(7.0, 0.0) },
+        Case { name: "pitch_down12_vowel", input: || signals::vowel(RATE, 0.6, 180.0), params: unity, fx: pitch(-12.0, 0.0) },
+        Case { name: "formant_up4_vowel", input: || signals::vowel(RATE, 0.6, 140.0), params: unity, fx: pitch(0.0, 4.0) },
+        Case { name: "deep_voice_vowel", input: || signals::vowel(RATE, 0.6, 160.0), params: unity, fx: pitch(-5.0, -3.0) },
+        Case { name: "pitch_noise", input: || signals::noise(RATE, 0.3, 0.3, 2), params: unity, fx: pitch(5.0, 2.0) },
     ]
 }
 
@@ -49,7 +77,7 @@ fn golden_outputs_match() {
     let mut failures = Vec::new();
 
     for case in cases() {
-        let out = offline::render(&(case.input)(), RATE, case.params, offline::DEFAULT_BLOCK);
+        let out = offline::render(&(case.input)(), RATE, case.params, &case.fx, offline::DEFAULT_BLOCK);
         let path = dir.join(format!("{}.wav", case.name));
         let actual_path = dir.join(format!("{}.actual.wav", case.name));
         let _ = std::fs::remove_file(&actual_path);
@@ -79,13 +107,15 @@ fn golden_outputs_match() {
     );
 }
 
-/// Bypass must be a true null: output identical to input (once effects with latency exist, this
-/// also checks the dry path is delay-compensated).
+/// Bypass must be a true null even with effects configured: the output is the input delayed only
+/// by the limiter lookahead, bit for bit.
 #[test]
 fn bypass_is_null() {
     let x = signals::vowel(RATE, 0.3, 160.0);
-    let y = offline::render(&x, RATE, CoreParams { bypass: true, ..Default::default() }, offline::DEFAULT_BLOCK);
-    assert_eq!(analysis::max_abs_diff(&x, &y), 0.0);
+    let bypass = CoreParams { bypass: true, ..Default::default() };
+    let y = offline::render(&x, RATE, bypass, &pitch(7.0, 3.0), offline::DEFAULT_BLOCK);
+    let d = voice_changer::dsp::Limiter::new(RATE as f32, voice_changer::dsp::LIMITER_CEILING_DB).latency();
+    assert_eq!(analysis::max_abs_diff(&x[..x.len() - d], &y[d..]), 0.0);
 }
 
 /// Throughput check, run with `cargo test --release --test golden -- --ignored --nocapture`.
@@ -93,9 +123,16 @@ fn bypass_is_null() {
 #[ignore]
 fn render_speed() {
     let x = signals::vowel(RATE, 60.0, 150.0);
-    let t = std::time::Instant::now();
-    let y = offline::render(&x, RATE, CoreParams::default(), offline::DEFAULT_BLOCK);
-    let secs = t.elapsed().as_secs_f64();
-    assert_eq!(y.len(), x.len());
-    println!("60 s rendered in {:.1} ms ({:.0}x real time)", secs * 1000.0, 60.0 / secs);
+    for (label, fx) in [("no effects", FxSettings::default()), ("pitch -5 / formant -3", pitch(-5.0, -3.0))] {
+        let t = std::time::Instant::now();
+        let y = offline::render(&x, RATE, CoreParams::default(), &fx, offline::DEFAULT_BLOCK);
+        let secs = t.elapsed().as_secs_f64();
+        assert_eq!(y.len(), x.len());
+        println!(
+            "{label}: 60 s in {:.1} ms = {:.0}x real time = {:.3}% of one core live",
+            secs * 1000.0,
+            60.0 / secs,
+            secs / 60.0 * 100.0
+        );
+    }
 }

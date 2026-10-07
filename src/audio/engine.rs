@@ -15,7 +15,7 @@
 use super::devices::{self, DeviceList};
 use super::shared::{Shared, SinkStats};
 use crate::config::DeviceRef;
-use crate::dsp::{self, CoreParams, DriftResampler, EngineCore, SmoothedValue};
+use crate::dsp::{self, Chain, CoreParams, DriftResampler, EffectKind, EngineCore, SmoothedValue};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -41,6 +41,8 @@ pub struct EngineSettings {
     /// `None` = Windows default output.
     pub monitor: Option<DeviceRef>,
     pub monitor_enabled: bool,
+    /// Effect order for the chain built at start.
+    pub chain_order: Vec<EffectKind>,
 }
 
 pub enum Command {
@@ -48,6 +50,8 @@ pub enum Command {
     Stop,
     SetCable(Option<DeviceRef>),
     SetMonitor { device: Option<DeviceRef>, enabled: bool },
+    /// Rebuild the effect chain in a new order; swapped in with a crossfade, no restart.
+    SetChainOrder(Vec<EffectKind>),
     RefreshDevices,
     Shutdown,
 }
@@ -144,9 +148,16 @@ enum SinkKind {
     Monitor,
 }
 
-/// Messages to the capture callback. Producers are allocated here, never on the audio thread.
+/// Messages to the capture callback. Everything is allocated here, never on the audio thread.
 enum SinkMsg {
     Set(SinkKind, Option<Producer<f32>>),
+    Chain(Chain),
+}
+
+/// Objects the capture callback hands back so they are freed off the audio thread.
+enum Retired {
+    Producer(#[allow(dead_code)] Producer<f32>),
+    Chain(#[allow(dead_code)] Chain),
 }
 
 struct OutputSink {
@@ -158,8 +169,8 @@ struct Running {
     _input: cpal::Stream,
     engine_rate: u32,
     sink_tx: Producer<SinkMsg>,
-    /// Old producers handed back by the capture callback, dropped here (off the audio thread).
-    returned: Consumer<Producer<f32>>,
+    /// Old producers/chains handed back by the capture callback, dropped here.
+    returned: Consumer<Retired>,
     cable: Option<OutputSink>,
     monitor: Option<OutputSink>,
     /// WASAPI flags a capture discontinuity while a stream spins up; we forget xruns from the
@@ -228,6 +239,15 @@ impl Controller {
                     } else if !enabled && open {
                         // The output callback fades to silence; close once the fade is done.
                         self.detach_sink(SinkKind::Monitor, Duration::from_millis(80));
+                    }
+                }
+            }
+            Command::SetChainOrder(order) => {
+                self.settings.chain_order = order;
+                if let Some(running) = &mut self.running {
+                    let chain = Chain::build(&self.settings.chain_order, &self.shared.fx, running.engine_rate as f32, MAX_BLOCK);
+                    if running.sink_tx.push(SinkMsg::Chain(chain)).is_err() {
+                        log::warn!("chain queue full; order change dropped");
                     }
                 }
             }
@@ -327,7 +347,11 @@ impl Controller {
         let (ret_tx, returned) = RingBuffer::new(8);
         let state = CaptureState {
             shared: self.shared.clone(),
-            core: EngineCore::new(engine_rate as f32, MAX_BLOCK),
+            core: EngineCore::with_chain(
+                engine_rate as f32,
+                MAX_BLOCK,
+                Chain::build(&self.settings.chain_order, &self.shared.fx, engine_rate as f32, MAX_BLOCK),
+            ),
             mono: vec![0.0; MAX_BLOCK],
             channels: config.channels as usize,
             rate: engine_rate as f32,
@@ -529,21 +553,31 @@ struct CaptureState {
     cable: Option<Producer<f32>>,
     monitor: Option<Producer<f32>>,
     sink_rx: Consumer<SinkMsg>,
-    ret_tx: Producer<Producer<f32>>,
+    ret_tx: Producer<Retired>,
     poisoned: bool,
 }
 
 impl CaptureState {
     fn process<T: Copy>(&mut self, data: &[T], to_f32: impl Fn(T) -> f32 + Copy) {
         let start = Instant::now();
-        while let Ok(SinkMsg::Set(kind, new)) = self.sink_rx.pop() {
-            let slot = match kind {
-                SinkKind::Cable => &mut self.cable,
-                SinkKind::Monitor => &mut self.monitor,
-            };
-            if let Some(old) = std::mem::replace(slot, new) {
-                // Hand back for deallocation off the audio thread (dropped here only if the queue is full).
-                let _ = self.ret_tx.push(old);
+        // Anything replaced is handed back for deallocation off the audio thread (it is only
+        // dropped here if the return queue is full, which would need a burst of changes).
+        while let Ok(msg) = self.sink_rx.pop() {
+            match msg {
+                SinkMsg::Set(kind, new) => {
+                    let slot = match kind {
+                        SinkKind::Cable => &mut self.cable,
+                        SinkKind::Monitor => &mut self.monitor,
+                    };
+                    if let Some(old) = std::mem::replace(slot, new) {
+                        let _ = self.ret_tx.push(Retired::Producer(old));
+                    }
+                }
+                SinkMsg::Chain(chain) => {
+                    if let Some(old) = self.core.set_chain(chain) {
+                        let _ = self.ret_tx.push(Retired::Chain(old));
+                    }
+                }
             }
         }
 
@@ -572,6 +606,11 @@ impl CaptureState {
             }
             frames += n;
         }
+
+        if let Some(old) = self.core.take_retired() {
+            let _ = self.ret_tx.push(Retired::Chain(old));
+        }
+        sh.dsp_latency.store(self.core.latency() as u32, Relaxed);
 
         if frames > 0 {
             sh.in_block.store(frames as u32, Relaxed);

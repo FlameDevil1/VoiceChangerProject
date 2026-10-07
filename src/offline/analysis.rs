@@ -35,6 +35,36 @@ pub fn snr_db(reference: &[f32], test: &[f32]) -> f32 {
     }
 }
 
+/// Power-weighted mean frequency (Hz) of a Hann-windowed segment from the middle of `x`
+/// (at most 4096 samples). A simple proxy for where the formants sit.
+pub fn spectral_centroid(x: &[f32], rate: u32) -> f32 {
+    let n = x.len().min(4096);
+    let start = (x.len() - n) / 2;
+    let seg: Vec<f64> = x[start..start + n]
+        .iter()
+        .enumerate()
+        .map(|(i, s)| *s as f64 * 0.5 * (1.0 - (std::f64::consts::TAU * i as f64 / n as f64).cos()))
+        .collect();
+    let (mut num, mut den) = (0.0f64, 0.0f64);
+    for k in 1..n / 2 {
+        // Direct DFT bin via a rotating phasor (test-only, so O(n^2) is fine).
+        let w = std::f64::consts::TAU * k as f64 / n as f64;
+        let (c, s) = (w.cos(), w.sin());
+        let (mut re, mut im, mut pr, mut pi) = (0.0, 0.0, 1.0f64, 0.0f64);
+        for v in &seg {
+            re += v * pr;
+            im += v * pi;
+            let t = pr * c - pi * s;
+            pi = pr * s + pi * c;
+            pr = t;
+        }
+        let power = re * re + im * im;
+        num += power * k as f64 * rate as f64 / n as f64;
+        den += power;
+    }
+    if den > 0.0 { (num / den) as f32 } else { 0.0 }
+}
+
 /// Fundamental frequency by the YIN cumulative-mean-normalised difference function, searched
 /// between `fmin` and `fmax`. Returns `None` for unvoiced or silent input.
 pub fn estimate_f0(x: &[f32], rate: u32, fmin: f32, fmax: f32) -> Option<f32> {
@@ -85,6 +115,14 @@ mod tests {
         let f = estimate_f0(&x, 48_000, 60.0, 800.0).unwrap();
         assert!((f - 233.0).abs() < 0.5, "{f}");
         assert_eq!(estimate_f0(&signals::silence(48_000, 0.3), 48_000, 60.0, 800.0), None);
+    }
+
+    #[test]
+    fn centroid_of_sines() {
+        for f in [500.0, 2000.0] {
+            let c = spectral_centroid(&signals::sine(48_000, 0.2, f, 0.5), 48_000);
+            assert!((c - f as f32).abs() < 30.0, "{f}: {c}");
+        }
     }
 
     #[test]

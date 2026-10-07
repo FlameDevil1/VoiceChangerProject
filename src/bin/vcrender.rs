@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
-use voice_changer::dsp::{db_to_gain, CoreParams};
+use voice_changer::dsp::{db_to_gain, CoreParams, FxSettings};
 use voice_changer::offline::{self, WavFormat};
 
 const USAGE: &str = "\
@@ -20,6 +20,9 @@ Options:
                         Default: <input>_vc.wav next to each input.
       --in-gain <dB>    Input gain (default 0)
       --out-gain <dB>   Output gain (default 0)
+      --pitch <st>      Pitch shift in semitones, -12..12 (enables pitch & formant)
+      --formant <st>    Formant shift in semitones, -12..12 (enables pitch & formant)
+      --mix <0..1>      Wet/dry mix of pitch & formant (default 1)
       --bypass          Skip effects (gains still apply)
       --channel <c>     mix | left | right (default mix)
       --pcm16           Write 16-bit PCM instead of 32-bit float
@@ -31,6 +34,7 @@ struct Opts {
     inputs: Vec<PathBuf>,
     out: Option<PathBuf>,
     params: CoreParams,
+    fx: FxSettings,
     channel: Option<usize>,
     format: WavFormat,
     block: usize,
@@ -42,6 +46,7 @@ fn parse() -> Result<Opts, String> {
         inputs: Vec::new(),
         out: None,
         params: CoreParams::default(),
+        fx: FxSettings::default(),
         channel: None,
         format: WavFormat::Float32,
         block: offline::DEFAULT_BLOCK,
@@ -57,6 +62,15 @@ fn parse() -> Result<Opts, String> {
             "-o" | "--out" => o.out = Some(args.next().ok_or("--out needs a path")?.into()),
             "--in-gain" => o.params.input_gain = db_to_gain(num(args.next(), &a)?),
             "--out-gain" => o.params.output_gain = db_to_gain(num(args.next(), &a)?),
+            "--pitch" => {
+                o.fx.pitch.semitones = num(args.next(), &a)?;
+                o.fx.pitch.enabled = true;
+            }
+            "--formant" => {
+                o.fx.pitch.formant = num(args.next(), &a)?;
+                o.fx.pitch.enabled = true;
+            }
+            "--mix" => o.fx.pitch.mix = num(args.next(), &a)?.clamp(0.0, 1.0),
             "--bypass" => o.params.bypass = true,
             "--pcm16" => o.format = WavFormat::Pcm16,
             "--block" => o.block = num(args.next(), &a)?.max(1.0) as usize,
@@ -125,7 +139,7 @@ fn render_one(input: &Path, output: &Path, o: &Opts) -> Result<f64, String> {
     let mono = offline::to_mono(&audio, o.channel);
     let decoded = t.elapsed();
     let t = Instant::now();
-    let out = offline::render(&mono, audio.rate, o.params, o.block);
+    let out = offline::render(&mono, audio.rate, o.params, &o.fx, o.block);
     let rendered = t.elapsed();
     offline::save_wav(output, &out, audio.rate, o.format)?;
     let secs = audio.duration_secs();

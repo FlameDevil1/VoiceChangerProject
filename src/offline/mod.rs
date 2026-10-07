@@ -7,7 +7,7 @@ pub mod analysis;
 pub mod io;
 pub mod signals;
 
-use crate::dsp::{CoreParams, EngineCore};
+use crate::dsp::{Chain, CoreParams, EngineCore, FxParams, FxSettings};
 
 pub use io::{load, save_wav, Audio, WavFormat};
 
@@ -15,13 +15,16 @@ pub use io::{load, save_wav, Audio, WavFormat};
 /// size by default makes offline output match live output exactly.
 pub const DEFAULT_BLOCK: usize = 480;
 
-/// Render mono `input` at `sample_rate` through a fresh `EngineCore`, `block` frames at a time.
+/// Render mono `input` at `sample_rate` through a fresh `EngineCore` with the effects in `fx`,
+/// `block` frames at a time.
 ///
 /// Every effect must produce the same output for any block size; the test suite checks this
 /// for each processor, which catches state-handling bugs at block boundaries.
-pub fn render(input: &[f32], sample_rate: u32, params: CoreParams, block: usize) -> Vec<f32> {
+pub fn render(input: &[f32], sample_rate: u32, params: CoreParams, fx: &FxSettings, block: usize) -> Vec<f32> {
     let block = block.clamp(1, crate::dsp::MAX_BLOCK);
-    let mut core = EngineCore::new(sample_rate as f32, block);
+    let fx_params = FxParams::from_settings(fx);
+    let chain = Chain::build(&fx.order, &fx_params, sample_rate as f32, block);
+    let mut core = EngineCore::with_chain(sample_rate as f32, block, chain);
     let mut out = input.to_vec();
     for chunk in out.chunks_mut(block) {
         core.process(chunk, params);
@@ -44,9 +47,13 @@ mod tests {
     fn render_is_block_size_invariant() {
         let x = signals::vowel(48_000, 0.5, 140.0);
         let params = CoreParams { input_gain: 0.7, output_gain: 1.2, ..Default::default() };
-        let reference = render(&x, 48_000, params, DEFAULT_BLOCK);
+        let mut fx = FxSettings::default();
+        fx.pitch.enabled = true;
+        fx.pitch.semitones = -3.0;
+        fx.pitch.formant = 2.0;
+        let reference = render(&x, 48_000, params, &fx, DEFAULT_BLOCK);
         for block in [1, 64, 333, 4096] {
-            let y = render(&x, 48_000, params, block);
+            let y = render(&x, 48_000, params, &fx, block);
             assert!(analysis::max_abs_diff(&reference, &y) < 1e-6, "block {block}");
         }
     }

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use voice_changer::audio::engine::OutputInfo;
 use voice_changer::audio::{devices, Command, EngineHandle, EngineSettings, EngineState, Shared, Status};
 use voice_changer::config::{Config, DeviceRef, LatencyMode, ThemePref};
+use voice_changer::dsp::pitch::MAX_SHIFT_SEMITONES;
 use voice_changer::dsp::{db_to_gain, gain_to_db};
 
 /// Meter redraw rates (focused, background). Measured ~0.45 % of one core per fps on a laptop
@@ -40,6 +41,7 @@ impl App {
         shared.monitor_enabled.store(cfg.monitor_enabled, Relaxed);
         shared.input_channel.store(cfg.input_channel.map_or(-1, |c| c as i32), Relaxed);
         shared.set_margin(cfg.latency.margin_seconds());
+        shared.fx.store(&cfg.fx);
 
         let ctx = cc.egui_ctx.clone();
         let engine = EngineHandle::spawn(shared, Box::new(move || ctx.request_repaint()));
@@ -70,6 +72,7 @@ impl App {
             cable: self.cfg.cable.clone(),
             monitor: self.cfg.monitor.clone(),
             monitor_enabled: self.cfg.monitor_enabled,
+            chain_order: self.cfg.fx.order.clone(),
         }
     }
 
@@ -360,6 +363,42 @@ impl App {
         });
     }
 
+    fn effects_section(&mut self, ui: &mut egui::Ui) {
+        let before = self.cfg.fx.clone();
+        section(ui, "Effects", |ui| {
+            let p = &mut self.cfg.fx.pitch;
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut p.enabled, RichText::new("Pitch & formant").strong());
+                if !p.enabled {
+                    ui.label(RichText::new("(off: adds no latency or CPU)").small().weak());
+                }
+            });
+            let max = MAX_SHIFT_SEMITONES;
+            let mut moved = false;
+            egui::Grid::new("pitch").num_columns(3).spacing([8.0, 6.0]).show(ui, |ui| {
+                moved |= slider_row(ui, "Pitch", &mut p.semitones, -max..=max, " st", 1.0, 0.0)
+                    .on_hover_text("Semitones. 12 = one octave. Type a value by clicking the number.")
+                    .changed();
+                moved |= slider_row(ui, "Fine tune", &mut p.cents, -100.0..=100.0, " ct", 1.0, 0.0).changed();
+                moved |= slider_row(ui, "Formant", &mut p.formant, -max..=max, " st", 0.5, 0.0)
+                    .on_hover_text("Vocal tract size. + sounds smaller/younger, - sounds bigger/deeper.")
+                    .changed();
+                let mut pct = p.mix * 100.0;
+                if slider_row(ui, "Mix", &mut pct, 0.0..=100.0, " %", 1.0, 100.0).changed() {
+                    p.mix = pct / 100.0;
+                }
+            });
+            // Moving a pitch control while the effect is off is a clear sign you want it on.
+            if moved && !p.enabled {
+                p.enabled = true;
+            }
+        });
+        if self.cfg.fx != before {
+            self.engine.shared.fx.store(&self.cfg.fx);
+            self.mark_dirty();
+        }
+    }
+
     fn performance_section(&mut self, ui: &mut egui::Ui) {
         section(ui, "Latency & performance", |ui| {
             ui.horizontal(|ui| {
@@ -391,12 +430,13 @@ impl App {
             let sh = &self.engine.shared;
             let rate = self.status.sample_rate.max(1) as f32;
             let in_ms = sh.in_block.load(Relaxed) as f32 / rate * 1000.0;
+            let dsp_ms = sh.dsp_latency.load(Relaxed) as f32 / rate * 1000.0;
             let glitches = sh.cable.underruns.load(Relaxed)
                 + sh.monitor.underruns.load(Relaxed)
                 + sh.capture_xruns.load(Relaxed);
             let path_ms = |info: &Option<OutputInfo>, fill: f32| {
                 info.as_ref().filter(|i| !i.lost && i.sample_rate > 0).map(|i| {
-                    in_ms + fill + i.buffer_frames as f32 / i.sample_rate as f32 * 1000.0
+                    in_ms + dsp_ms + fill + i.buffer_frames as f32 / i.sample_rate as f32 * 1000.0
                 })
             };
             let cable_ms = path_ms(&self.status.cable, sh.cable.fill_ms.load());
@@ -454,9 +494,10 @@ impl eframe::App for App {
                 self.devices_section(ui);
                 self.levels_section(ui);
                 self.controls_section(ui);
+                self.effects_section(ui);
                 self.performance_section(ui);
                 ui.add_space(4.0);
-                ui.label(RichText::new(format!("v{} · Step 1: pass-through", env!("CARGO_PKG_VERSION"))).small().weak());
+                ui.label(RichText::new(format!("v{} · Step 3: pitch & formant", env!("CARGO_PKG_VERSION"))).small().weak());
             });
         });
     }
@@ -538,6 +579,27 @@ fn device_combo(
             }
         });
     changed
+}
+
+/// Labelled slider with typed input (click the number) and a reset-to-default button.
+/// Returns the slider's response with `changed()` also covering the reset.
+fn slider_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &str,
+    step: f64,
+    default: f32,
+) -> egui::Response {
+    ui.label(label);
+    let mut r = ui.add(egui::Slider::new(value, range).suffix(suffix).step_by(step).max_decimals(1));
+    if ui.add_enabled(*value != default, egui::Button::new("⟲")).on_hover_text("Reset").clicked() {
+        *value = default;
+        r.mark_changed();
+    }
+    ui.end_row();
+    r
 }
 
 /// Slider with typed input (click the number) and a reset button. Returns true on change.

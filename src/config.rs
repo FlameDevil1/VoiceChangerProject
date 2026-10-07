@@ -1,5 +1,6 @@
 //! Settings persisted to `%APPDATA%\VoiceChanger\config.json`.
 
+use crate::dsp::FxSettings;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -72,6 +73,8 @@ pub struct Config {
     pub cable_choice_made: bool,
     /// Slower meter refresh to save CPU.
     pub low_power_ui: bool,
+    /// Effect settings (also the format presets will use).
+    pub fx: FxSettings,
 }
 
 impl Default for Config {
@@ -90,6 +93,7 @@ impl Default for Config {
             was_running: false,
             cable_choice_made: false,
             low_power_ui: false,
+            fx: FxSettings::default(),
         }
     }
 }

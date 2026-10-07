@@ -5,11 +5,13 @@
 //!   cargo run --release --example smoke -- 10 Speakers    same, into a real output with the voice muted
 //!
 //! Nothing is recorded, and nothing audible is played (monitoring stays off).
+//! Set VC_SMOKE_PITCH=1 to run with pitch -5 / formant -3 enabled.
 
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::time::Duration;
 use voice_changer::audio::{devices, Command, EngineHandle, EngineSettings, Shared};
+use voice_changer::dsp::{EffectKind, FxSettings};
 
 fn main() {
     let list = devices::enumerate(&cpal::default_host());
@@ -34,15 +36,24 @@ fn main() {
 
     let shared = Arc::new(Shared::default());
     shared.mute.store(test_out.is_some(), Relaxed);
+    if std::env::var_os("VC_SMOKE_PITCH").is_some() {
+        let mut fx = FxSettings::default();
+        fx.pitch.enabled = true;
+        fx.pitch.semitones = -5.0;
+        fx.pitch.formant = -3.0;
+        shared.fx.store(&fx);
+    }
     let engine = EngineHandle::spawn(shared.clone(), Box::new(|| {}));
-    engine.send(Command::Start(EngineSettings { cable, ..Default::default() }));
+    let chain_order = vec![EffectKind::Pitch];
+    engine.send(Command::Start(EngineSettings { cable, chain_order, ..Default::default() }));
     for _ in 0..seconds {
         std::thread::sleep(Duration::from_secs(1));
         let st = engine.status();
         println!(
-            "{:?} | block {} | in {:6.1} dB | load {:4.1}% | out fill {:5.1}/{:4.1} ms margin {:2.0} ms drift {:+5.0} ppm underruns {} | xruns {}",
+            "{:?} | block {} | dsp {} smp | in {:6.1} dB | load {:4.1}% | out fill {:5.1}/{:4.1} ms margin {:2.0} ms drift {:+5.0} ppm underruns {} | xruns {}",
             st.state,
             shared.in_block.load(Relaxed),
+            shared.dsp_latency.load(Relaxed),
             20.0 * shared.in_peak.take().max(1e-6).log10(),
             shared.load.take() * 100.0,
             shared.cable.fill_ms.load(),

@@ -59,34 +59,53 @@ pub fn noise(rate: u32, secs: f64, amp: f32, seed: u64) -> Vec<f32> {
     (0..len(rate, secs)).map(|_| amp * (2.0 * rng.next_f32() - 1.0)).collect()
 }
 
-/// A synthetic sustained "ah" vowel: a band-limited glottal pulse train at `f0` through three
-/// formant resonators (roughly F1 700 Hz, F2 1220 Hz, F3 2600 Hz). Pitch and formants are known
+/// A synthetic sustained "ah" vowel: a band-limited glottal source at `f0` through a Klatt-style
+/// cascade of three formant resonators (F1 700 Hz, F2 1220 Hz, F3 2600 Hz). Pitch and formants are known
 /// exactly, which is what pitch- and formant-shift tests need, and it sounds voice-like enough to
 /// judge effects by ear.
 pub fn vowel(rate: u32, secs: f64, f0: f64) -> Vec<f32> {
     let n = len(rate, secs);
     let sr = rate as f64;
-    // Glottal source: sum of harmonics with -12 dB/octave rolloff, band-limited below Nyquist.
+    // Glottal source: one period of harmonics with -6 dB/octave rolloff (glottal -12 dB plus
+    // +6 dB lip radiation), band-limited below
+    // Nyquist, stored as a wavetable and played back with a phase accumulator (cheap enough for
+    // minute-long test signals).
+    const TABLE: usize = 4096;
     let harmonics = ((sr * 0.45) / f0) as usize;
-    let mut src: Vec<f64> = (0..n)
+    let table: Vec<f64> = (0..=TABLE)
         .map(|i| {
-            let t = i as f64 / sr;
-            (1..=harmonics).map(|h| (TAU * f0 * h as f64 * t).sin() / (h * h) as f64).sum()
+            let ph = TAU * i as f64 / TABLE as f64;
+            (1..=harmonics).map(|h| (ph * h as f64).sin() / h as f64).sum()
+        })
+        .collect();
+    let inc = f0 / sr * TABLE as f64;
+    let mut phase = 0.0f64;
+    let mut src: Vec<f64> = (0..n)
+        .map(|_| {
+            let i = phase as usize;
+            let f = phase - i as f64;
+            let v = table[i] + (table[i + 1] - table[i]) * f;
+            phase += inc;
+            if phase >= TABLE as f64 {
+                phase -= TABLE as f64;
+            }
+            v
         })
         .collect();
 
     for (fc, bw) in [(700.0, 110.0), (1220.0, 120.0), (2600.0, 160.0)] {
-        // Two-pole resonator, normalised to unity gain at its centre frequency.
+        // Two-pole resonator with unity gain at 0 Hz, so the cascade keeps the low harmonics and
+        // each formant stands out as a peak.
         let r = (-std::f64::consts::PI * bw / sr).exp();
         let a1 = -2.0 * r * (TAU * fc / sr).cos();
         let a2 = r * r;
-        let g = (1.0 - r) * (1.0 + r * r - 2.0 * r * (2.0 * TAU * fc / sr).cos()).sqrt();
+        let g = 1.0 + a1 + a2;
         let (mut y1, mut y2) = (0.0, 0.0);
         for s in src.iter_mut() {
             let y = g * *s - a1 * y1 - a2 * y2;
             y2 = y1;
             y1 = y;
-            *s += y * 4.0; // keep some source so the low harmonics (and f0) stay present
+            *s = y;
         }
     }
 

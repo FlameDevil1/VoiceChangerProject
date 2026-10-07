@@ -11,7 +11,7 @@ rendering (and therefore DSP testing) comes early.
 | Language / framework | **Rust**; `cpal` (WASAPI) for audio, `egui`/`eframe` (OpenGL) for the UI | No GC pauses in the audio thread, memory-safe, single small `.exe`. |
 | UI renderer | `glow` (OpenGL), not `wgpu` | Measured: same CPU cost, ~25 % of the memory (92 MB vs 375 MB private). |
 | Licensing | **Undecided**; keep every dependency permissive (MIT/BSD/Apache) until it is | Leaves both free and paid open. Rules out GPL Rubber Band unless licensed. |
-| Pitch / formant | Signalsmith Stretch (MIT) or an in-house WSOLA/PSOLA + LPC envelope | Low latency (time-domain); no GPL. |
+| Pitch / formant | **In-house causal TD-PSOLA** (step 3) | ~0.06 ms algorithmic latency vs 20–60 ms for FFT/stretcher approaches; formants preserved by design; no third-party licence. |
 | Noise suppression | `nnnoiseless` (pure-Rust RNNoise, BSD) | 10 ms frames, 48 kHz native, CPU-only. |
 | Internal sample rate | The mic's native rate (48 kHz on almost every Windows device) | WASAPI shared-mode capture only accepts the native format; outputs are opened at the same rate and Windows converts if needed. |
 | Target latency | **≤ 40 ms app-side** in Balanced mode, measured and shown in the UI | See latency budget below. |
@@ -51,9 +51,18 @@ rendering (and therefore DSP testing) comes early.
   up front (`MAX_BLOCK`); larger callbacks are split.
 - UI → audio: atomics only (`Shared`). Audio → UI: atomics (peaks, load, ring stats).
 - Every parameter change is smoothed (20 ms linear ramp): no zipper noise, no clicks on toggles.
-- Effect-chain changes are built off-thread and swapped in atomically (step 3).
-- Effects with latency report it via `Processor::latency()`. The chain delays the dry path by the
-  same amount so wet/dry mixing doesn't comb-filter, including while bypassed.
+- Effect chains are built and prepared off-thread, handed to the capture callback through the
+  lock-free queue, and crossfaded in over 20 ms; the old chain is handed back and freed on the
+  controller thread.
+- Effects with latency report it via `Processor::latency()`. Each slot delays its dry signal by
+  that amount, so a partial wet/dry mix never comb-filters.
+- **Disabled effects are removed from the signal path**: zero CPU and zero added latency.
+  On/off and bypass toggles are 20 ms crossfades against the undelayed input. A brief latency
+  mismatch inside a 20 ms fade is inaudible, and it keeps "normal voice" at minimum latency.
+- The first block after creation uses the requested parameter values directly (no ramp from
+  defaults), so files rendered at -6 dB are at -6 dB from the first sample.
+- Denormals are flushed to zero (MXCSR FTZ/DAZ) at the top of every callback and offline render.
+- The always-on limiter also replaces NaN/inf with silence, so a DSP bug can't reach the cable.
 - Audio callbacks are wrapped in `catch_unwind`: a DSP bug silences that stream and triggers a
   rebuild instead of killing the app.
 
@@ -64,7 +73,9 @@ rendering (and therefore DSP testing) comes early.
 | WASAPI capture period | 10 ms |
 | Ring target: ½ input block + output block + margin (6 ms) | 21 ms |
 | WASAPI render buffer | 10 ms |
-| **App-side total** | **≈ 41 ms** (Low mode ≈ 37 ms) |
+| Limiter lookahead (always on) | 1 ms |
+| Pitch & formant (when on) | 0.06 ms |
+| **App-side total** | **≈ 42 ms** (Low mode ≈ 38 ms) |
 | VB-CABLE + receiving app | outside our control |
 
 Margins grow by 1 ms automatically after each underrun (capped at 50 ms), so "Low" is safe to
@@ -125,6 +136,30 @@ Named effects in the original spec are mostly presets over a smaller set of DSP 
 
 Fixed chain order: gate → noise suppression → pitch/formant → character → EQ → compressor →
 bad-mic/connection → **limiter (always last)**.
+
+### Pitch & formant: **done (step 3)**
+
+Causal TD-PSOLA (`src/dsp/pitch.rs`):
+
+- **Tracking:** YIN every 5 ms on a ~16 kHz decimated copy (60–900 Hz). Falls back to the global
+  minimum for breathy frames, and holds the pitch 40 ms through dropouts unless the signal goes
+  quiet. Real-time voicing agrees with offline analysis on 80–95 % of voiced frames of TTS speech.
+- **Marks:** analysis marks one period apart, phase-locked (≤ 1/8 period per mark) to the latest
+  glottal pulse, so grains are centred on pulses. That is what keeps formant shifting clean.
+- **Synthesis:** grains overlap-added at `period / pitch_ratio`, read time-scaled by the formant
+  ratio. Asymmetric windows (left half = previous grain's right half) sum to exactly 1, so zero
+  shift is transparent (> 60 dB SNR). Power normalisation keeps loudness within about ±1.5 dB
+  over ±7 st (−3 dB at +12 st).
+- **Causal evaluation:** every output sample is computed on demand from grains that read only
+  past input, so the algorithmic latency is the 3-sample interpolator pad instead of the classic
+  two pitch periods (~25 ms).
+- **Unvoiced** sounds pass at their original pitch (no buzz on "s"/"f"), but are formant-shifted.
+- **Measured:** pitch exact to < 0.5 % on synthetic vowels from −12 to +12 st. Formant peaks track
+  within one harmonic for ±8 st. Spectral centroid moves ≤ 6 % under pure pitch shift (vs 50 %
+  for resampling). Cost ≈ 0.5 % of one laptop core (Ryzen 7 7735HS).
+- **Known limits:** large upward shifts (+7..+12) reuse grains, which adds slight roughness on
+  real voices (inherent to PSOLA). Onsets take ~5–20 ms before the tracker locks. A future
+  "quality" option could add a spectral-envelope (LPC) path for very large formant shifts.
 
 ### 3A. Modulation sliders
 
@@ -197,7 +232,8 @@ should check for VB-CABLE and link to it, not bundle it.
 1. ✅ Audio I/O, device selection, pass-through, meters, virtual cable output, drift
    compensation, reconnect, settings, GUI shell.
 2. ✅ Offline renderer (`EngineCore` over files), `vcrender` CLI, golden-file test harness.
-3. Effect chain infrastructure (atomic chain swap, latency compensation, limiter) + pitch/formant.
+3. ✅ Effect chain (slots, crossfaded hot-swap, latency-compensated mix), always-on limiter,
+   pitch/formant shifter, Effects panel, `vcrender --pitch/--formant`.
 4. Core effects: gate, RNNoise, EQ, compressor, reverb, robot, radio.
 5. Modulation sliders (3A).
 6. Bad mic / bad connection (3B), monitor tap point.
