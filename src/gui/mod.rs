@@ -7,6 +7,7 @@
 //! **Advanced** (every control, effect order, preset management).
 
 mod effects;
+mod help;
 pub mod icon;
 mod presets;
 mod system;
@@ -46,6 +47,9 @@ pub struct App {
     preset_ui: presets::PresetUi,
     /// Tray, hotkeys and toasts.
     system: system::System,
+    /// Result of the last Help & diagnostics action: (text, is_error).
+    help_message: Option<(String, bool)>,
+    ctx: egui::Context,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -93,6 +97,8 @@ impl App {
             presets: PresetStore::load(&PresetStore::default_dir()),
             preset_ui: Default::default(),
             system,
+            help_message: None,
+            ctx: cc.egui_ctx.clone(),
             _instance: instance,
         }
     }
@@ -607,6 +613,7 @@ impl eframe::App for App {
                     self.effects_section(ui);
                     self.system_section(ui);
                     self.performance_section(ui);
+                    self.help_section(ui);
                 } else {
                     self.preset_grid(ui);
                     self.controls_section(ui, false);

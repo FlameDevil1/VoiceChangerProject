@@ -4,6 +4,7 @@
 //! be unit-tested and reused by the offline file renderer.
 
 pub mod audio;
+pub mod backup;
 pub mod config;
 pub mod dsp;
 pub mod hotkeys;

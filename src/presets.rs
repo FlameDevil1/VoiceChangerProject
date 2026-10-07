@@ -302,7 +302,16 @@ impl PresetStore {
         if preset.name.trim().is_empty() {
             preset.name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Imported").to_string();
         }
-        let base = preset.name.trim().to_string();
+        self.add_unique(preset)
+    }
+
+    /// Save as a new user preset, renaming to "Name (2)", "Name (3)", ... on a clash.
+    pub fn add_unique(&mut self, mut preset: Preset) -> Result<String, String> {
+        let base = match preset.name.trim() {
+            "" => "Preset".to_string(),
+            n => n.to_string(),
+        };
+        preset.name = base.clone();
         let mut n = 2;
         while self.validate_name(&preset.name, None).is_err() {
             preset.name = format!("{base} ({n})");
