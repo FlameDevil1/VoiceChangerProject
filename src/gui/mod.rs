@@ -10,7 +10,9 @@ mod effects;
 mod help;
 pub mod icon;
 mod presets;
+mod spectrum;
 mod system;
+mod test_voice;
 mod tray;
 mod widgets;
 
@@ -50,6 +52,8 @@ pub struct App {
     /// Result of the last Help & diagnostics action: (text, is_error).
     help_message: Option<(String, bool)>,
     ctx: egui::Context,
+    spectrum: spectrum::Spectrum,
+    test: test_voice::TestVoice,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -99,6 +103,8 @@ impl App {
             system,
             help_message: None,
             ctx: cc.egui_ctx.clone(),
+            spectrum: Default::default(),
+            test: Default::default(),
             _instance: instance,
         }
     }
@@ -203,13 +209,20 @@ impl App {
             self.meters[2].update(sh.monitor.peak.take(), dt);
             let load = sh.load.take();
             self.load = load.max(self.load * 0.9);
+            sh.scope.enabled.store(self.cfg.show_spectrum, Relaxed);
+            if self.cfg.show_spectrum {
+                self.spectrum.update(&sh.scope, self.status.sample_rate, dt);
+            }
             let (fps_focused, fps_background) = if self.cfg.low_power_ui { FPS_LOW_POWER } else { FPS_NORMAL };
             let fps = if focused { fps_focused } else { fps_background };
             ctx.request_repaint_after(Duration::from_millis(1000 / fps));
         } else {
             self.meters = Default::default();
             self.load = 0.0;
+            self.spectrum.reset();
+            self.engine.shared.scope.enabled.store(false, Relaxed);
         }
+        self.test_tick(ctx);
     }
 
     // ---- sections ------------------------------------------------------------------------
@@ -422,6 +435,13 @@ impl App {
                     ui.end_row();
                 }
             });
+            if self.cfg.show_spectrum && self.is_active() {
+                self.spectrum.show(ui);
+                ui.label(RichText::new("Bars: your voice after effects · lines: before").small().weak());
+            }
+            if ui.checkbox(&mut self.cfg.show_spectrum, "Spectrum").on_hover_text("Live frequency display").changed() {
+                self.mark_dirty();
+            }
         });
     }
 
@@ -443,6 +463,7 @@ impl App {
                     sh.mute.store(!mute, Relaxed);
                 }
             });
+            self.test_voice_row(ui);
             if !advanced {
                 let mut fx = self.cfg.fx.clone();
                 ui.horizontal_wrapped(|ui| {

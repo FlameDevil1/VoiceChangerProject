@@ -5,7 +5,55 @@
 
 use crate::dsp::chain::FxParams;
 pub use crate::dsp::shared_params::AtomicF32;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering::Relaxed};
+
+/// Samples kept for the spectrum display (power of two).
+pub const SCOPE_LEN: usize = 4096;
+
+/// Recent input and output samples for the spectrum display. The capture callback writes them
+/// (plain atomic stores, no locks) only while the display is visible; the UI reads a snapshot.
+/// A read can overlap a write and mix two blocks, which is invisible in a spectrum.
+#[derive(Debug)]
+pub struct Scope {
+    pub enabled: AtomicBool,
+    input: Box<[AtomicF32]>,
+    output: Box<[AtomicF32]>,
+    pos: AtomicUsize,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        let buf = || (0..SCOPE_LEN).map(|_| AtomicF32::new(0.0)).collect();
+        Self { enabled: AtomicBool::new(false), input: buf(), output: buf(), pos: AtomicUsize::new(0) }
+    }
+}
+
+impl Scope {
+    /// Store a block of input samples (before effects) at the current position.
+    pub fn write_input(&self, block: &[f32]) {
+        let p = self.pos.load(Relaxed);
+        for (i, s) in block.iter().enumerate() {
+            self.input[(p + i) & (SCOPE_LEN - 1)].store(*s);
+        }
+    }
+
+    /// Store the matching output block (after effects) and advance.
+    pub fn write_output(&self, block: &[f32]) {
+        let p = self.pos.load(Relaxed);
+        for (i, s) in block.iter().enumerate() {
+            self.output[(p + i) & (SCOPE_LEN - 1)].store(*s);
+        }
+        self.pos.store(p.wrapping_add(block.len()), Relaxed);
+    }
+
+    /// The latest `n` (<= SCOPE_LEN) input and output samples, oldest first.
+    pub fn snapshot(&self, n: usize) -> (Vec<f32>, Vec<f32>) {
+        let n = n.min(SCOPE_LEN);
+        let end = self.pos.load(Relaxed);
+        let read = |b: &[AtomicF32]| (0..n).map(|i| b[(end.wrapping_sub(n) + i) & (SCOPE_LEN - 1)].load()).collect();
+        (read(&self.input), read(&self.output))
+    }
+}
 
 /// Statistics for one output (virtual cable or monitor).
 #[derive(Debug, Default)]
@@ -54,6 +102,7 @@ pub struct Shared {
 
     // ---- effects (UI -> audio) ----
     pub fx: FxParams,
+    pub scope: Scope,
 }
 
 impl Default for Shared {
@@ -77,6 +126,7 @@ impl Default for Shared {
             cable: SinkStats::default(),
             monitor: SinkStats::default(),
             fx: FxParams::default(),
+            scope: Scope::default(),
         }
     }
 }
@@ -85,5 +135,27 @@ impl Shared {
     pub fn set_margin(&self, seconds: f64) {
         self.margin.store(seconds as f32);
         self.margin_gen.fetch_add(1, Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_snapshot_returns_latest_samples_in_order() {
+        let s = Scope::default();
+        for block in 0..10 {
+            let input: Vec<f32> = (0..1000).map(|i| (block * 1000 + i) as f32).collect();
+            let output: Vec<f32> = input.iter().map(|v| -v).collect();
+            s.write_input(&input);
+            s.write_output(&output);
+        }
+        let (inp, out) = s.snapshot(2048);
+        assert_eq!(inp.len(), 2048);
+        assert_eq!(inp.last(), Some(&9999.0));
+        assert_eq!(inp[0], 9999.0 - 2047.0);
+        assert!(inp.windows(2).all(|w| w[1] == w[0] + 1.0));
+        assert_eq!(out.last(), Some(&-9999.0));
     }
 }

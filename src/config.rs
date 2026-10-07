@@ -94,6 +94,8 @@ pub struct Config {
     pub start_minimized: bool,
     /// The "still running in the tray" hint has been shown once.
     pub tray_hint_shown: bool,
+    /// Live spectrum under the level meters.
+    pub show_spectrum: bool,
 }
 
 impl Default for Config {
@@ -119,6 +121,7 @@ impl Default for Config {
             close_to_tray: true,
             start_minimized: false,
             tray_hint_shown: false,
+            show_spectrum: true,
         }
     }
 }

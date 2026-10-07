@@ -4,6 +4,7 @@
 pub mod biquad;
 pub mod chain;
 pub mod drift;
+pub mod fft;
 pub mod fx;
 pub mod limiter;
 pub mod params;

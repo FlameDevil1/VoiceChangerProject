@@ -55,6 +55,8 @@ pub enum Command {
     },
     /// Rebuild the effect chain in a new order; swapped in with a crossfade, no restart.
     SetChainOrder(Vec<EffectKind>),
+    /// Copy the raw (pre-effects) mic signal into this ring, e.g. to record a test clip; `None` stops.
+    SetTap(Option<Producer<f32>>),
     RefreshDevices,
     Shutdown,
 }
@@ -155,6 +157,7 @@ enum SinkKind {
 enum SinkMsg {
     Set(SinkKind, Option<Producer<f32>>),
     Chain(Chain),
+    Tap(Option<Producer<f32>>),
 }
 
 /// Objects the capture callback hands back so they are freed off the audio thread.
@@ -243,6 +246,13 @@ impl Controller {
                         // The output callback fades to silence; close once the fade is done.
                         self.detach_sink(SinkKind::Monitor, Duration::from_millis(80));
                     }
+                }
+            }
+            Command::SetTap(tap) => {
+                if let Some(running) = &mut self.running
+                    && running.sink_tx.push(SinkMsg::Tap(tap)).is_err()
+                {
+                    log::warn!("sink queue full; test recording not started");
                 }
             }
             Command::SetChainOrder(order) => {
@@ -366,6 +376,7 @@ impl Controller {
             channels: config.channels as usize,
             rate: engine_rate as f32,
             cable: None,
+            tap: None,
             monitor: None,
             sink_rx,
             ret_tx,
@@ -561,6 +572,8 @@ struct CaptureState {
     channels: usize,
     rate: f32,
     cable: Option<Producer<f32>>,
+    /// Raw mic copy for a test recording.
+    tap: Option<Producer<f32>>,
     monitor: Option<Producer<f32>>,
     sink_rx: Consumer<SinkMsg>,
     ret_tx: Producer<Retired>,
@@ -594,6 +607,11 @@ impl CaptureState {
                         let _ = self.ret_tx.push(Retired::Chain(old));
                     }
                 }
+                SinkMsg::Tap(new) => {
+                    if let Some(old) = std::mem::replace(&mut self.tap, new) {
+                        let _ = self.ret_tx.push(Retired::Producer(old));
+                    }
+                }
             }
         }
 
@@ -614,7 +632,17 @@ impl CaptureState {
             let n = dsp::downmix(chunk, self.channels, channel, &mut self.mono, to_f32);
             let buf = &mut self.mono[..n];
             sh.in_peak.fetch_max(dsp::peak(buf));
+            if let Some(tap) = &mut self.tap {
+                let _ = tap.push_partial_slice(buf);
+            }
+            let scope = sh.scope.enabled.load(Relaxed);
+            if scope {
+                sh.scope.write_input(buf);
+            }
             self.core.process(buf, params);
+            if scope {
+                sh.scope.write_output(buf);
+            }
             sh.out_peak.fetch_max(dsp::peak(buf));
             for tx in [&mut self.cable, &mut self.monitor].into_iter().flatten() {
                 // If an output stalls, its ring fills; drop the overflow rather than block.

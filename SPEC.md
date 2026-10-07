@@ -249,6 +249,9 @@ As specified, plus:
 - **Toasts**: a small Win32 overlay (no focus, click-through, sized to its text) shows the preset
   or state after hotkey/tray actions, even while the window is hidden. Not visible over
   exclusive-fullscreen games (an OS limitation); fine over borderless/windowed.
+- **Mouse buttons** (middle, side 4/5) bind like keys. The global mouse hook is installed only
+  while a binding uses a mouse button or one is being recorded (it would otherwise run on every
+  mouse movement); each event is handled by exactly one path, chosen by the cursor position.
 - Limitation: hooks don't see keys while an app running as administrator is focused.
 
 ## 6. User interface
@@ -321,7 +324,11 @@ should check for VB-CABLE and link to it, not bundle it.
    runtime CPU dispatch, GUI split into modules, CI workflow.
 6. ✅ Global hotkeys (hold-to-use, panic, presets, mute), tray icon, toasts, close to tray,
    single instance, monitoring safety warning, 10 ms noise suppression.
-7. Test button (record 5 s, play back processed), visualizer, other UI polish.
+7. ✅ Test button (record 5 s with the virtual mic muted; replay as changed voice, re-rendered
+   with current settings, or original; plays to the monitor device only), live spectrum
+   (before/after effects), mouse side/middle buttons as hotkeys (mouse hook only while needed),
+   Help & diagnostics (open settings folder, copy diagnostics report, settings backup/restore),
+   release workflow (tag `vX.Y.Z` to publish a zip).
 8. Modulation sliders (3A).
 9. Bad mic / bad connection (3B), scenario presets, monitor tap point.
 10. File processing UI (batch, MP3 export, record-with-effects).

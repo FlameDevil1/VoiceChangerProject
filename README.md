@@ -3,10 +3,10 @@
 Real-time voice changer for Windows 10/11 that feeds a virtual microphone (VB-CABLE), so
 Discord, games, OBS and Zoom hear the processed voice.
 
-**Status: steps 1–6 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
+**Status: steps 1–7 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
 output, offline renderer, limiter, eight effects (noise suppression, noise gate, pitch & formant,
 robot, equalizer, compressor, reverb, radio/telephone), presets, Simple/Advanced modes, global
-hotkeys and a tray icon.
+hotkeys (keyboard or mouse buttons), a tray icon, a Test button and a live spectrum.
 
 ## Requirements
 
@@ -38,6 +38,23 @@ The binary is `target/release/voicechanger.exe`.
 7. Hotkeys work while gaming: **Ctrl+Alt+V** effects on/off, **Ctrl+Alt+Page Down/Up** next or
    previous preset, **Ctrl+Alt+N** normal voice, **Ctrl+Alt+M** mute. Change them, or add a
    hold-to-use key, under Advanced → Hotkeys & tray. Closing the window keeps it in the tray.
+8. **Test my voice** records 5 seconds (the virtual mic is muted meanwhile); then play it back as
+   the changed voice (re-rendered with your current settings, so tweak and replay) or the original.
+9. Problems? Advanced → Help & diagnostics → **Copy diagnostics**, and paste it into an issue.
+   **Back up settings** saves your settings and presets to one file.
+
+## Releases
+
+Tag a version that matches `Cargo.toml` and push the tag; GitHub Actions tests, builds and
+publishes a zip with `voicechanger.exe` and `vcrender.exe`:
+
+```bash
+git tag v0.1.0
+```
+
+```bash
+git push origin v0.1.0
+```
 
 Settings and logs live in `%APPDATA%\VoiceChanger\`.
 
@@ -105,6 +122,9 @@ Layout:
 | `src/hotkeys.rs` | Hotkey bindings, key matcher, Windows keyboard hooks |
 | `src/toast.rs`, `src/single_instance.rs` | On-screen toast (Win32), one-instance guard |
 | `src/gui/tray.rs`, `src/gui/system.rs` | Tray icon/menu; hotkey/tray handling and settings |
+| `src/gui/test_voice.rs`, `src/gui/spectrum.rs` | Test button; live spectrum |
+| `src/gui/help.rs`, `src/backup.rs` | Diagnostics report, settings backup/restore |
+| `src/audio/playback.rs`, `src/dsp/fft.rs` | One-shot clip playback; FFT for the spectrum |
 | `src/dsp/simd.rs` | Runtime CPU feature dispatch (AVX2 when available) |
 | `SPEC.md` | Full spec, architecture and latency budget |
 
