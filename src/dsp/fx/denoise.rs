@@ -96,7 +96,7 @@ impl Processor for Denoise {
             self.params.status.store(STATUS_BUFFERED, std::sync::atomic::Ordering::Relaxed);
         }
         if !self.buffered {
-            for chunk in buf.chunks_exact_mut(FRAME) {
+            for chunk in buf.as_chunks_mut::<FRAME>().0 {
                 for (dst, s) in self.frame_in.iter_mut().zip(chunk.iter()) {
                     *dst = *s * SCALE;
                 }
