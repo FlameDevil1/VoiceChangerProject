@@ -11,3 +11,4 @@ pub mod hotkeys;
 pub mod logging;
 pub mod offline;
 pub mod presets;
+pub mod updates;

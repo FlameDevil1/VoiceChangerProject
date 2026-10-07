@@ -34,6 +34,13 @@ impl App {
                     self.restore_settings();
                 }
             });
+            if ui
+                .checkbox(&mut self.cfg.check_updates, "Check for updates at startup")
+                .on_hover_text("Asks GitHub for the latest release. Nothing about you or your settings is sent.")
+                .changed()
+            {
+                self.mark_dirty();
+            }
             if let Some((text, is_error)) = &self.help_message {
                 ui.colored_label(if *is_error { RED } else { GREEN }, text);
             }

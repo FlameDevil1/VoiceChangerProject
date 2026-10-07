@@ -98,6 +98,8 @@ pub struct Config {
     pub show_spectrum: bool,
     /// Interface size (1.0 = 100 %). Also changed with Ctrl+= / Ctrl+- / Ctrl+0.
     pub ui_scale: f32,
+    /// Ask GitHub for a newer release at startup.
+    pub check_updates: bool,
 }
 
 impl Default for Config {
@@ -125,6 +127,7 @@ impl Default for Config {
             tray_hint_shown: false,
             show_spectrum: true,
             ui_scale: 1.0,
+            check_updates: true,
         }
     }
 }

@@ -30,6 +30,8 @@ serde_json = "1.0.151"
 symphonia = { version = "0.6.1", default-features = false, features = ["wav", "pcm", "flac", "mp3", "ogg", "vorbis", "adpcm"] }
 # System tray icon and menu (MIT/Apache-2.0). Linux-only defaults (GTK) disabled.
 tray-icon = { version = "0.26.0", default-features = false }
+# Update check over HTTPS using Windows' own TLS (no OpenSSL).
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls", "json"] }
 
 # Win32 APIs (single instance, hotkeys, tray). Same version cpal uses, so it compiles once.
 [target.'cfg(windows)'.dependencies]

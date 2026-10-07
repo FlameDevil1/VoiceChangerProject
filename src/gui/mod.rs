@@ -58,6 +58,9 @@ pub struct App {
     mic_blocked: bool,
     /// How long the running mic has delivered exact digital silence.
     silent_for: f32,
+    /// Newer release found by the startup check (filled in by a background thread).
+    update: Arc<std::sync::Mutex<Option<voice_changer::updates::Update>>>,
+    update_dismissed: bool,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -92,7 +95,8 @@ impl App {
         log::info!("DSP SIMD level: {}", simd::level().label());
 
         let auto_start_pending = cfg.was_running;
-        Self {
+        let check_updates = cfg.check_updates;
+        let app = Self {
             engine,
             cfg,
             dirty_since: None,
@@ -112,8 +116,33 @@ impl App {
             test: Default::default(),
             mic_blocked: voice_changer::audio::privacy::microphone_blocked(),
             silent_for: 0.0,
+            update: Arc::default(),
+            update_dismissed: false,
             _instance: instance,
+        };
+        if check_updates {
+            app.start_update_check(cc.egui_ctx.clone());
         }
+        app
+    }
+
+    /// Background update check; the result shows as a banner under the Start button.
+    fn start_update_check(&self, ctx: egui::Context) {
+        let slot = self.update.clone();
+        let _ =
+            std::thread::Builder::new().name("update-check".into()).spawn(move || match voice_changer::updates::check(
+                env!("CARGO_PKG_VERSION"),
+            ) {
+                Ok(Some(u)) => {
+                    log::info!("update available: {}", u.version);
+                    if let Ok(mut s) = slot.lock() {
+                        *s = Some(u);
+                    }
+                    ctx.request_repaint();
+                }
+                Ok(None) => log::info!("update check: up to date"),
+                Err(e) => log::info!("update check skipped: {e}"),
+            });
     }
 
     fn shared(&self) -> &Shared {
@@ -297,6 +326,16 @@ impl App {
         }
         if let Some(w) = &self.status.warning {
             ui.colored_label(AMBER, format!("⚠ {w}"));
+        }
+        let update = self.update.lock().ok().and_then(|u| u.clone());
+        if let (Some(u), false) = (update, self.update_dismissed) {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("Version {} is available.", u.version)).color(GREEN));
+                ui.hyperlink_to("Download", &u.url);
+                if ui.small_button("Later").clicked() {
+                    self.update_dismissed = true;
+                }
+            });
         }
     }
 
