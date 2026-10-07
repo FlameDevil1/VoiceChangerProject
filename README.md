@@ -107,3 +107,7 @@ Layout:
 | `src/gui/tray.rs`, `src/gui/system.rs` | Tray icon/menu; hotkey/tray handling and settings |
 | `src/dsp/simd.rs` | Runtime CPU feature dispatch (AVX2 when available) |
 | `SPEC.md` | Full spec, architecture and latency budget |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
