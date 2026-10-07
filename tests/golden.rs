@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 use voice_changer::dsp::{CoreParams, EffectKind, FxSettings};
-use voice_changer::offline::{self, analysis, signals, WavFormat};
+use voice_changer::offline::{self, WavFormat, analysis, signals};
 
 const RATE: u32 = 48_000;
 /// Allows for floating-point differences between compilers/CPU targets, nothing audible.
@@ -74,10 +74,30 @@ fn cases() -> Vec<Case> {
             params: CoreParams { input_gain: 4.0, ..unity },
             fx: none(),
         },
-        Case { name: "pitch_up7_vowel", input: || signals::vowel(RATE, 0.6, 140.0), params: unity, fx: pitch(7.0, 0.0) },
-        Case { name: "pitch_down12_vowel", input: || signals::vowel(RATE, 0.6, 180.0), params: unity, fx: pitch(-12.0, 0.0) },
-        Case { name: "formant_up4_vowel", input: || signals::vowel(RATE, 0.6, 140.0), params: unity, fx: pitch(0.0, 4.0) },
-        Case { name: "deep_voice_vowel", input: || signals::vowel(RATE, 0.6, 160.0), params: unity, fx: pitch(-5.0, -3.0) },
+        Case {
+            name: "pitch_up7_vowel",
+            input: || signals::vowel(RATE, 0.6, 140.0),
+            params: unity,
+            fx: pitch(7.0, 0.0),
+        },
+        Case {
+            name: "pitch_down12_vowel",
+            input: || signals::vowel(RATE, 0.6, 180.0),
+            params: unity,
+            fx: pitch(-12.0, 0.0),
+        },
+        Case {
+            name: "formant_up4_vowel",
+            input: || signals::vowel(RATE, 0.6, 140.0),
+            params: unity,
+            fx: pitch(0.0, 4.0),
+        },
+        Case {
+            name: "deep_voice_vowel",
+            input: || signals::vowel(RATE, 0.6, 160.0),
+            params: unity,
+            fx: pitch(-5.0, -3.0),
+        },
         Case { name: "pitch_noise", input: || signals::noise(RATE, 0.3, 0.3, 2), params: unity, fx: pitch(5.0, 2.0) },
         Case { name: "gate_phrase", input: phrase, params: unity, fx: fx(EffectKind::Gate, &[]) },
         Case { name: "compressor_phrase", input: phrase, params: unity, fx: fx(EffectKind::Compressor, &[]) },
@@ -87,8 +107,18 @@ fn cases() -> Vec<Case> {
             params: unity,
             fx: fx(EffectKind::Eq, &[("low", 6.0), ("mid", -6.0), ("high", 4.0)]),
         },
-        Case { name: "reverb_hall_phrase", input: phrase, params: unity, fx: fx(EffectKind::Reverb, &[("size", 75.0), ("decay", 2.8)]) },
-        Case { name: "robot_vowel", input: || signals::vowel_glide(RATE, 0.6, 120.0, 220.0), params: unity, fx: fx(EffectKind::Robot, &[]) },
+        Case {
+            name: "reverb_hall_phrase",
+            input: phrase,
+            params: unity,
+            fx: fx(EffectKind::Reverb, &[("size", 75.0), ("decay", 2.8)]),
+        },
+        Case {
+            name: "robot_vowel",
+            input: || signals::vowel_glide(RATE, 0.6, 120.0, 220.0),
+            params: unity,
+            fx: fx(EffectKind::Robot, &[]),
+        },
         Case { name: "radio_phrase", input: phrase, params: unity, fx: fx(EffectKind::Radio, &[("noise", 30.0)]) },
         Case { name: "denoise_noisy_vowel", input: noisy_vowel, params: unity, fx: fx(EffectKind::Denoise, &[]) },
     ]

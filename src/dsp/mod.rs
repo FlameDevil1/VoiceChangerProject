@@ -15,7 +15,7 @@ pub mod util;
 pub use chain::{Chain, EffectKind, FxParams, FxSettings};
 pub use drift::DriftResampler;
 pub use limiter::Limiter;
-pub use util::{db_to_gain, gain_to_db, SmoothedValue};
+pub use util::{SmoothedValue, db_to_gain, gain_to_db};
 
 /// Output ceiling of the always-on limiter.
 pub const LIMITER_CEILING_DB: f32 = -1.0;

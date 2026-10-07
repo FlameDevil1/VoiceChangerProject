@@ -9,7 +9,7 @@ pub mod signals;
 
 use crate::dsp::{Chain, CoreParams, EngineCore, FxParams, FxSettings};
 
-pub use io::{load, save_wav, Audio, WavFormat};
+pub use io::{Audio, WavFormat, load, save_wav};
 
 /// Block size used by the live engine at 48 kHz (10 ms WASAPI period). Rendering with the same
 /// size by default makes offline output match live output exactly.
@@ -48,7 +48,8 @@ mod tests {
         let x = signals::vowel(48_000, 0.5, 140.0);
         let params = CoreParams { input_gain: 0.7, output_gain: 1.2, ..Default::default() };
         // Every effect at once, so block-boundary bugs anywhere in the chain show up here.
-        let mut fx = FxSettings::default().with(crate::dsp::EffectKind::Pitch, &[("semitones", -3.0), ("formant", 2.0)]);
+        let mut fx =
+            FxSettings::default().with(crate::dsp::EffectKind::Pitch, &[("semitones", -3.0), ("formant", 2.0)]);
         for kind in crate::dsp::EffectKind::ALL {
             fx.set_enabled(kind, true);
         }

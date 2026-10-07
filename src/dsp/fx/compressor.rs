@@ -1,19 +1,64 @@
 //! Feed-forward compressor with a soft knee. Evens out loud and quiet speech.
 
 use super::{coef, db_gain};
-use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
 use crate::dsp::Processor;
+use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
 use std::sync::Arc;
 
 pub const SPEC: EffectSpec = EffectSpec {
     label: "Compressor",
     help: "Makes loud and quiet parts more even, so you're easy to hear without peaking.",
     params: &[
-        ParamSpec { key: "threshold", label: "Threshold", min: -60.0, max: 0.0, default: -20.0, unit: " dB", step: 1.0, help: "Level above which compression starts." },
-        ParamSpec { key: "ratio", label: "Ratio", min: 1.0, max: 20.0, default: 4.0, unit: ":1", step: 0.5, help: "4:1 = 4 dB louder input gives 1 dB louder output." },
-        ParamSpec { key: "attack", label: "Attack", min: 0.1, max: 100.0, default: 5.0, unit: " ms", step: 0.1, help: "How fast it reacts to loud sounds." },
-        ParamSpec { key: "release", label: "Release", min: 10.0, max: 1000.0, default: 120.0, unit: " ms", step: 1.0, help: "How fast it lets go afterwards." },
-        ParamSpec { key: "makeup", label: "Makeup", min: 0.0, max: 24.0, default: 4.0, unit: " dB", step: 0.5, help: "Gain added after compression." },
+        ParamSpec {
+            key: "threshold",
+            label: "Threshold",
+            min: -60.0,
+            max: 0.0,
+            default: -20.0,
+            unit: " dB",
+            step: 1.0,
+            help: "Level above which compression starts.",
+        },
+        ParamSpec {
+            key: "ratio",
+            label: "Ratio",
+            min: 1.0,
+            max: 20.0,
+            default: 4.0,
+            unit: ":1",
+            step: 0.5,
+            help: "4:1 = 4 dB louder input gives 1 dB louder output.",
+        },
+        ParamSpec {
+            key: "attack",
+            label: "Attack",
+            min: 0.1,
+            max: 100.0,
+            default: 5.0,
+            unit: " ms",
+            step: 0.1,
+            help: "How fast it reacts to loud sounds.",
+        },
+        ParamSpec {
+            key: "release",
+            label: "Release",
+            min: 10.0,
+            max: 1000.0,
+            default: 120.0,
+            unit: " ms",
+            step: 1.0,
+            help: "How fast it lets go afterwards.",
+        },
+        ParamSpec {
+            key: "makeup",
+            label: "Makeup",
+            min: 0.0,
+            max: 24.0,
+            default: 4.0,
+            unit: " dB",
+            step: 0.5,
+            help: "Gain added after compression.",
+        },
     ],
     mix_label: "Mix",
     default_mix: 1.0,

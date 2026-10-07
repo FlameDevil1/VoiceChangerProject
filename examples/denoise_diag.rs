@@ -16,14 +16,25 @@ fn main() {
         ("white 0.05", signals::noise(rate, 6.0, 0.05, 2)),
         ("white 0.2", signals::noise(rate, 6.0, 0.2, 3)),
         ("brown", brown),
-        ("hum 50Hz+harm", (0..rate as usize * 6).map(|i| { let t = i as f32 / rate as f32; 0.05 * ((std::f32::consts::TAU * 50.0 * t).sin() + 0.5 * (std::f32::consts::TAU * 150.0 * t).sin()) }).collect()),
+        (
+            "hum 50Hz+harm",
+            (0..rate as usize * 6)
+                .map(|i| {
+                    let t = i as f32 / rate as f32;
+                    0.05 * ((std::f32::consts::TAU * 50.0 * t).sin() + 0.5 * (std::f32::consts::TAU * 150.0 * t).sin())
+                })
+                .collect(),
+        ),
     ];
     for (name, x) in cases {
         let mut chain = Chain::build(&[EffectKind::Denoise], &fx, rate as f32, 480);
         let mut y = x.clone();
         y.chunks_mut(480).for_each(|c| chain.process(c));
-        let red: Vec<String> = x.chunks(24_000).zip(y.chunks(24_000))
-            .map(|(a, b)| format!("{:5.1}", analysis::rms_db(a) - analysis::rms_db(b))).collect();
+        let red: Vec<String> = x
+            .chunks(24_000)
+            .zip(y.chunks(24_000))
+            .map(|(a, b)| format!("{:5.1}", analysis::rms_db(a) - analysis::rms_db(b)))
+            .collect();
         println!("{name:>14}: in {:6.1} dBFS | reduction per 0.5 s: {}", analysis::rms_db(&x), red.join(" "));
     }
 }

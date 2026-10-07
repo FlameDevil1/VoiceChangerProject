@@ -42,11 +42,7 @@ pub fn load(path: &Path) -> Result<Audio, String> {
 
     let (track_id, mut decoder) = {
         let track = format.default_track(TrackType::Audio).ok_or_else(|| ctx(&"no audio track"))?;
-        let params = track
-            .codec_params
-            .as_ref()
-            .and_then(|p| p.audio())
-            .ok_or_else(|| ctx(&"unsupported codec"))?;
+        let params = track.codec_params.as_ref().and_then(|p| p.audio()).ok_or_else(|| ctx(&"unsupported codec"))?;
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(params, &AudioDecoderOptions::default())
             .map_err(|e| ctx(&e))?;

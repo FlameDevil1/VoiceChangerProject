@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
-use voice_changer::dsp::{db_to_gain, CoreParams, EffectKind, FxSettings};
+use voice_changer::dsp::{CoreParams, EffectKind, FxSettings, db_to_gain};
 use voice_changer::offline::{self, WavFormat};
 
 const USAGE: &str = "\
@@ -228,14 +228,16 @@ fn main() {
     let total_audio = std::sync::Mutex::new(0.0f64);
     std::thread::scope(|s| {
         for _ in 0..o.jobs.min(o.inputs.len()) {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                let Some(input) = o.inputs.get(i) else { break };
-                match render_one(input, &outputs[i], &o) {
-                    Ok(secs) => *total_audio.lock().unwrap() += secs,
-                    Err(e) => {
-                        eprintln!("error: {e}");
-                        failed.fetch_add(1, Ordering::Relaxed);
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(input) = o.inputs.get(i) else { break };
+                    match render_one(input, &outputs[i], &o) {
+                        Ok(secs) => *total_audio.lock().unwrap() += secs,
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            failed.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
             });

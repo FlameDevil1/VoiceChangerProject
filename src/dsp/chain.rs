@@ -12,10 +12,10 @@
 //! `FxSettings` is the plain, serialisable mirror used for config and presets. Both are driven
 //! by each effect's `EffectSpec`, so adding an effect means writing its module and one line here.
 
+use super::Processor;
 use super::fx;
 use super::params::{EffectParams, EffectSettings, EffectSpec};
 use super::util::{DelayLine, SmoothedValue};
-use super::Processor;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;

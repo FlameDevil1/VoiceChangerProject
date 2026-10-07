@@ -54,11 +54,8 @@ pub fn find(host: &cpal::Host, want: Option<&DeviceRef>, input: bool) -> Option<
     let Some(want) = want else {
         return if input { host.default_input_device() } else { host.default_output_device() };
     };
-    let devices: Vec<cpal::Device> = if input {
-        host.input_devices().ok()?.collect()
-    } else {
-        host.output_devices().ok()?.collect()
-    };
+    let devices: Vec<cpal::Device> =
+        if input { host.input_devices().ok()?.collect() } else { host.output_devices().ok()?.collect() };
     let by_id = devices.iter().position(|d| d.id().map(|id| id.to_string() == want.id).unwrap_or(false));
     let by_name = || devices.iter().position(|d| d.description().map(|x| x.name() == want.name).unwrap_or(false));
     by_id.or_else(by_name).map(|i| devices[i].clone())

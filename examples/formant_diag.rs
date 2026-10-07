@@ -20,7 +20,9 @@ fn peak(x: &[f32], f0: f64, lo: f64, hi: f64) -> f64 {
     let mut f = (lo / f0).ceil() * f0;
     while f <= hi {
         let d = harm_db(x, f);
-        if d > best.1 { best = (f, d); }
+        if d > best.1 {
+            best = (f, d);
+        }
         f += f0;
     }
     best.0
@@ -35,8 +37,16 @@ fn main() {
         let fx = FxSettings::default().with(EffectKind::Pitch, &[("formant", fm)]);
         let y = seg(&offline::render(&x, 48_000, CoreParams::default(), &fx, 480));
         let r = 2f64.powf(fm as f64 / 12.0);
-        println!("{:>5} r{:.2} {:>6.0} {:>6.0} {:>6.0}   (exp {:.0} {:.0} {:.0})", fm, r,
-            peak(&y, f0, 300.0, 1000.0 * r.max(1.0)), peak(&y, f0, 900.0 * r, 1700.0 * r), peak(&y, f0, 2000.0 * r, 3200.0 * r),
-            700.0 * r, 1220.0 * r, 2600.0 * r);
+        println!(
+            "{:>5} r{:.2} {:>6.0} {:>6.0} {:>6.0}   (exp {:.0} {:.0} {:.0})",
+            fm,
+            r,
+            peak(&y, f0, 300.0, 1000.0 * r.max(1.0)),
+            peak(&y, f0, 900.0 * r, 1700.0 * r),
+            peak(&y, f0, 2000.0 * r, 3200.0 * r),
+            700.0 * r,
+            1220.0 * r,
+            2600.0 * r
+        );
     }
 }

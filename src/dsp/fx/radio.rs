@@ -1,19 +1,55 @@
 //! Radio / telephone: steep band-pass, saturation and optional static.
 
+use crate::dsp::Processor;
 use crate::dsp::biquad::{Biquad, Shape};
 use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
 use crate::dsp::util::Rng;
-use crate::dsp::Processor;
 use std::sync::Arc;
 
 pub const SPEC: EffectSpec = EffectSpec {
     label: "Radio / telephone",
     help: "Thin, band-limited sound of a phone line, radio or walkie-talkie.",
     params: &[
-        ParamSpec { key: "low_cut", label: "Low cut", min: 100.0, max: 1500.0, default: 300.0, unit: " Hz", step: 10.0, help: "Removes bass below this." },
-        ParamSpec { key: "high_cut", label: "High cut", min: 1500.0, max: 8000.0, default: 3400.0, unit: " Hz", step: 50.0, help: "Removes treble above this." },
-        ParamSpec { key: "drive", label: "Distortion", min: 0.0, max: 100.0, default: 30.0, unit: " %", step: 1.0, help: "Crunchy overdriven speaker." },
-        ParamSpec { key: "noise", label: "Static", min: 0.0, max: 100.0, default: 0.0, unit: " %", step: 1.0, help: "Background hiss." },
+        ParamSpec {
+            key: "low_cut",
+            label: "Low cut",
+            min: 100.0,
+            max: 1500.0,
+            default: 300.0,
+            unit: " Hz",
+            step: 10.0,
+            help: "Removes bass below this.",
+        },
+        ParamSpec {
+            key: "high_cut",
+            label: "High cut",
+            min: 1500.0,
+            max: 8000.0,
+            default: 3400.0,
+            unit: " Hz",
+            step: 50.0,
+            help: "Removes treble above this.",
+        },
+        ParamSpec {
+            key: "drive",
+            label: "Distortion",
+            min: 0.0,
+            max: 100.0,
+            default: 30.0,
+            unit: " %",
+            step: 1.0,
+            help: "Crunchy overdriven speaker.",
+        },
+        ParamSpec {
+            key: "noise",
+            label: "Static",
+            min: 0.0,
+            max: 100.0,
+            default: 0.0,
+            unit: " %",
+            step: 1.0,
+            help: "Background hiss.",
+        },
     ],
     mix_label: "Mix",
     default_mix: 1.0,

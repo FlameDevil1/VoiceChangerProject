@@ -1,20 +1,65 @@
 //! Robot voice: flattens your pitch to a fixed note (PSOLA monotone), then adds ring modulation
 //! and a comb resonance tuned to that note for the metallic edge.
 
+use crate::dsp::Processor;
 use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
 use crate::dsp::pitch::{PitchShifter, PsolaControls};
-use crate::dsp::Processor;
 use std::sync::Arc;
 
 pub const SPEC: EffectSpec = EffectSpec {
     label: "Robot",
     help: "Monotone, metallic robot voice.",
     params: &[
-        ParamSpec { key: "pitch_hz", label: "Robot pitch", min: 50.0, max: 300.0, default: 110.0, unit: " Hz", step: 1.0, help: "The note the voice is flattened to." },
-        ParamSpec { key: "monotone", label: "Monotone", min: 0.0, max: 100.0, default: 100.0, unit: " %", step: 1.0, help: "100 % = perfectly flat; lower keeps some of your intonation." },
-        ParamSpec { key: "ring", label: "Ring mod", min: 0.0, max: 100.0, default: 25.0, unit: " %", step: 1.0, help: "Classic sci-fi warble." },
-        ParamSpec { key: "ring_hz", label: "Ring speed", min: 10.0, max: 200.0, default: 40.0, unit: " Hz", step: 1.0, help: "Frequency of the ring modulator." },
-        ParamSpec { key: "metallic", label: "Metallic", min: 0.0, max: 100.0, default: 35.0, unit: " %", step: 1.0, help: "Resonant, tinny edge." },
+        ParamSpec {
+            key: "pitch_hz",
+            label: "Robot pitch",
+            min: 50.0,
+            max: 300.0,
+            default: 110.0,
+            unit: " Hz",
+            step: 1.0,
+            help: "The note the voice is flattened to.",
+        },
+        ParamSpec {
+            key: "monotone",
+            label: "Monotone",
+            min: 0.0,
+            max: 100.0,
+            default: 100.0,
+            unit: " %",
+            step: 1.0,
+            help: "100 % = perfectly flat; lower keeps some of your intonation.",
+        },
+        ParamSpec {
+            key: "ring",
+            label: "Ring mod",
+            min: 0.0,
+            max: 100.0,
+            default: 25.0,
+            unit: " %",
+            step: 1.0,
+            help: "Classic sci-fi warble.",
+        },
+        ParamSpec {
+            key: "ring_hz",
+            label: "Ring speed",
+            min: 10.0,
+            max: 200.0,
+            default: 40.0,
+            unit: " Hz",
+            step: 1.0,
+            help: "Frequency of the ring modulator.",
+        },
+        ParamSpec {
+            key: "metallic",
+            label: "Metallic",
+            min: 0.0,
+            max: 100.0,
+            default: 35.0,
+            unit: " %",
+            step: 1.0,
+            help: "Resonant, tinny edge.",
+        },
     ],
     mix_label: "Mix",
     default_mix: 1.0,

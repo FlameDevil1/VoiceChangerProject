@@ -1,8 +1,8 @@
 //! 5-band equaliser. Bands at 0 dB are skipped entirely, so a flat EQ is bit-exact and free.
 
+use crate::dsp::Processor;
 use crate::dsp::biquad::{Biquad, Shape};
 use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
-use crate::dsp::Processor;
 use std::sync::Arc;
 
 const fn band(key: &'static str, label: &'static str, help: &'static str) -> ParamSpec {

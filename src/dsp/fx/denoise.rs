@@ -8,8 +8,8 @@
 //! At sample rates other than 48 kHz the effect passes audio through and reports status 1, so
 //! the UI can explain how to switch the mic to 48 kHz.
 
-use crate::dsp::params::{EffectParams, EffectSpec};
 use crate::dsp::Processor;
+use crate::dsp::params::{EffectParams, EffectSpec};
 use nnnoiseless::DenoiseState;
 use std::sync::Arc;
 
@@ -73,7 +73,9 @@ impl Processor for Denoise {
     fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
         let supported = (sample_rate - 48_000.0).abs() < 1.0;
         self.state = supported.then(DenoiseState::new);
-        self.params.status.store(if supported { 0 } else { STATUS_UNSUPPORTED_RATE }, std::sync::atomic::Ordering::Relaxed);
+        self.params
+            .status
+            .store(if supported { 0 } else { STATUS_UNSUPPORTED_RATE }, std::sync::atomic::Ordering::Relaxed);
         self.reset();
     }
 

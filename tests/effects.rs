@@ -145,7 +145,8 @@ fn reverb_tail_length_follows_decay_and_stays_stable() {
         let win = 2400;
         let db: Vec<f32> = y.chunks(win).map(level_db).collect();
         let start = 2; // 100 ms
-        let t30 = db[start..].iter().position(|d| *d < db[start] - 30.0).expect("decays") as f32 * win as f32 / RATE as f32;
+        let t30 =
+            db[start..].iter().position(|d| *d < db[start] - 30.0).expect("decays") as f32 * win as f32 / RATE as f32;
         let rt60 = 2.0 * t30;
         assert!((rt60 / decay - 1.0).abs() < 0.35, "decay {decay}: measured RT60 {rt60:.2}");
     }

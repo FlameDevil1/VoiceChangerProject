@@ -1,0 +1,3 @@
+# Project formatting: run `cargo fmt`. CI checks it.
+max_width = 120
+use_small_heuristics = "Max"

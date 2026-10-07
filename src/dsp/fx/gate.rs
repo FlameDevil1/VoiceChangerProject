@@ -2,18 +2,63 @@
 
 use super::{coef, db_gain};
 use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
-use crate::dsp::{db_to_gain, Processor};
+use crate::dsp::{Processor, db_to_gain};
 use std::sync::Arc;
 
 pub const SPEC: EffectSpec = EffectSpec {
     label: "Noise gate",
     help: "Turns the mic down between words. Set the threshold just above your background noise.",
     params: &[
-        ParamSpec { key: "threshold", label: "Threshold", min: -80.0, max: 0.0, default: -45.0, unit: " dB", step: 1.0, help: "Sound quieter than this is reduced." },
-        ParamSpec { key: "reduction", label: "Reduction", min: 0.0, max: 80.0, default: 40.0, unit: " dB", step: 1.0, help: "How much quieter it gets when closed (80 = silent)." },
-        ParamSpec { key: "attack", label: "Attack", min: 0.1, max: 50.0, default: 1.0, unit: " ms", step: 0.1, help: "Time to open fully when you start talking." },
-        ParamSpec { key: "hold", label: "Hold", min: 0.0, max: 500.0, default: 80.0, unit: " ms", step: 1.0, help: "How long it stays open after you stop." },
-        ParamSpec { key: "release", label: "Release", min: 5.0, max: 1000.0, default: 150.0, unit: " ms", step: 1.0, help: "Time to fade out fully after the hold." },
+        ParamSpec {
+            key: "threshold",
+            label: "Threshold",
+            min: -80.0,
+            max: 0.0,
+            default: -45.0,
+            unit: " dB",
+            step: 1.0,
+            help: "Sound quieter than this is reduced.",
+        },
+        ParamSpec {
+            key: "reduction",
+            label: "Reduction",
+            min: 0.0,
+            max: 80.0,
+            default: 40.0,
+            unit: " dB",
+            step: 1.0,
+            help: "How much quieter it gets when closed (80 = silent).",
+        },
+        ParamSpec {
+            key: "attack",
+            label: "Attack",
+            min: 0.1,
+            max: 50.0,
+            default: 1.0,
+            unit: " ms",
+            step: 0.1,
+            help: "Time to open fully when you start talking.",
+        },
+        ParamSpec {
+            key: "hold",
+            label: "Hold",
+            min: 0.0,
+            max: 500.0,
+            default: 80.0,
+            unit: " ms",
+            step: 1.0,
+            help: "How long it stays open after you stop.",
+        },
+        ParamSpec {
+            key: "release",
+            label: "Release",
+            min: 5.0,
+            max: 1000.0,
+            default: 150.0,
+            unit: " ms",
+            step: 1.0,
+            help: "Time to fade out fully after the hold.",
+        },
     ],
     mix_label: "Mix",
     default_mix: 1.0,

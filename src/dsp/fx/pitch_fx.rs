@@ -1,8 +1,8 @@
 //! Pitch & formant effect: drives the PSOLA engine from its parameters.
 
-use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
-use crate::dsp::pitch::{PitchShifter, PsolaControls, MAX_SHIFT_SEMITONES};
 use crate::dsp::Processor;
+use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
+use crate::dsp::pitch::{MAX_SHIFT_SEMITONES, PitchShifter, PsolaControls};
 use std::sync::Arc;
 
 const M: f32 = MAX_SHIFT_SEMITONES;
@@ -11,9 +11,36 @@ pub const SPEC: EffectSpec = EffectSpec {
     label: "Pitch & formant",
     help: "Changes how high your voice is (pitch) and how big you sound (formant) independently.",
     params: &[
-        ParamSpec { key: "semitones", label: "Pitch", min: -M, max: M, default: 0.0, unit: " st", step: 1.0, help: "Semitones. 12 = one octave." },
-        ParamSpec { key: "cents", label: "Fine tune", min: -100.0, max: 100.0, default: 0.0, unit: " ct", step: 1.0, help: "Hundredths of a semitone." },
-        ParamSpec { key: "formant", label: "Formant", min: -M, max: M, default: 0.0, unit: " st", step: 0.5, help: "Vocal tract size: + sounds smaller/younger, - sounds bigger/deeper." },
+        ParamSpec {
+            key: "semitones",
+            label: "Pitch",
+            min: -M,
+            max: M,
+            default: 0.0,
+            unit: " st",
+            step: 1.0,
+            help: "Semitones. 12 = one octave.",
+        },
+        ParamSpec {
+            key: "cents",
+            label: "Fine tune",
+            min: -100.0,
+            max: 100.0,
+            default: 0.0,
+            unit: " ct",
+            step: 1.0,
+            help: "Hundredths of a semitone.",
+        },
+        ParamSpec {
+            key: "formant",
+            label: "Formant",
+            min: -M,
+            max: M,
+            default: 0.0,
+            unit: " st",
+            step: 0.5,
+            help: "Vocal tract size: + sounds smaller/younger, - sounds bigger/deeper.",
+        },
     ],
     mix_label: "Mix",
     default_mix: 1.0,

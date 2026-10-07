@@ -19,7 +19,7 @@ use crate::dsp::{self, Chain, CoreParams, DriftResampler, EffectKind, EngineCore
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use rtrb::{Consumer, Producer, RingBuffer};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -49,7 +49,10 @@ pub enum Command {
     Start(EngineSettings),
     Stop,
     SetCable(Option<DeviceRef>),
-    SetMonitor { device: Option<DeviceRef>, enabled: bool },
+    SetMonitor {
+        device: Option<DeviceRef>,
+        enabled: bool,
+    },
     /// Rebuild the effect chain in a new order; swapped in with a crossfade, no restart.
     SetChainOrder(Vec<EffectKind>),
     RefreshDevices,
@@ -246,7 +249,12 @@ impl Controller {
                 log::info!("effect order: {order:?}");
                 self.settings.chain_order = order;
                 if let Some(running) = &mut self.running {
-                    let chain = Chain::build(&self.settings.chain_order, &self.shared.fx, running.engine_rate as f32, MAX_BLOCK);
+                    let chain = Chain::build(
+                        &self.settings.chain_order,
+                        &self.shared.fx,
+                        running.engine_rate as f32,
+                        MAX_BLOCK,
+                    );
                     if running.sink_tx.push(SinkMsg::Chain(chain)).is_err() {
                         log::warn!("chain queue full; order change dropped");
                     }
@@ -332,11 +340,12 @@ impl Controller {
     }
 
     fn start(&mut self) -> Result<(), String> {
-        let device = devices::find(&self.host, self.settings.input.as_ref(), true)
-            .ok_or_else(|| match &self.settings.input {
+        let device = devices::find(&self.host, self.settings.input.as_ref(), true).ok_or_else(|| {
+            match &self.settings.input {
                 Some(d) => format!("Microphone \"{}\" not found", d.name),
                 None => "No microphone found".to_string(),
-            })?;
+            }
+        })?;
         let name = devices::name_of(&device);
         let supported = device.default_input_config().map_err(|e| format!("{name}: {e}"))?;
         let engine_rate = supported.sample_rate();
@@ -382,8 +391,7 @@ impl Controller {
                 .to_string()
         });
 
-        self.running =
-            Some(Running {
+        self.running = Some(Running {
             _input: stream,
             engine_rate,
             sink_tx,
@@ -487,9 +495,9 @@ impl Controller {
     fn mark_lost(&mut self, kind: SinkKind, lost: bool) {
         let name = match kind {
             SinkKind::Cable => self.settings.cable.as_ref().map(|d| d.name.clone()),
-            SinkKind::Monitor => Some(
-                self.settings.monitor.as_ref().map(|d| d.name.clone()).unwrap_or_else(|| "Default output".into()),
-            ),
+            SinkKind::Monitor => {
+                Some(self.settings.monitor.as_ref().map(|d| d.name.clone()).unwrap_or_else(|| "Default output".into()))
+            }
         };
         if let (Ok(mut s), Some(name)) = (self.status.lock(), name) {
             let info = Some(OutputInfo { name, lost, ..Default::default() });

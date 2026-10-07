@@ -7,10 +7,10 @@
 //! Nothing is recorded, and nothing audible is played (monitoring stays off).
 //! Set VC_SMOKE_PITCH=1 to run with pitch -5 / formant -3 enabled, VC_SMOKE_ALL=1 for every effect.
 
-use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
-use voice_changer::audio::{devices, Command, EngineHandle, EngineSettings, Shared};
+use voice_changer::audio::{Command, EngineHandle, EngineSettings, Shared, devices};
 use voice_changer::dsp::{EffectKind, FxSettings};
 
 fn main() {

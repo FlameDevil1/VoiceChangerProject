@@ -58,11 +58,9 @@ pub fn device_combo(
         Some(d) => format!("{} (disconnected)", d.name),
     };
     let mut changed = false;
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(current)
-        .width(ui.available_width().min(300.0))
-        .truncate()
-        .show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(current).width(ui.available_width().min(300.0)).truncate().show_ui(
+        ui,
+        |ui| {
             if ui.selectable_label(selected.is_none(), &none_text).clicked() && selected.is_some() {
                 *selected = None;
                 changed = true;
@@ -71,13 +69,18 @@ pub fn device_combo(
                 let is_sel = selected.as_ref().is_some_and(|s| s.id == d.id);
                 let text = if *warn { format!("⚠ {name}") } else { name.clone() };
                 let r = ui.selectable_label(is_sel, text);
-                let r = if *warn { r.on_hover_text("This is a virtual cable output; using it here causes feedback.") } else { r };
+                let r = if *warn {
+                    r.on_hover_text("This is a virtual cable output; using it here causes feedback.")
+                } else {
+                    r
+                };
                 if r.clicked() && !is_sel {
                     *selected = Some(d.to_ref());
                     changed = true;
                 }
             }
-        });
+        },
+    );
     changed
 }
 
@@ -185,7 +188,10 @@ impl Meter {
             }
             let hx = rect.left() + rect.width() * frac(self.hold_db);
             if frac(self.hold_db) > 0.0 {
-                p.line_segment([egui::pos2(hx, rect.top()), egui::pos2(hx, rect.bottom())], (1.5, v.strong_text_color()));
+                p.line_segment(
+                    [egui::pos2(hx, rect.top()), egui::pos2(hx, rect.bottom())],
+                    (1.5, v.strong_text_color()),
+                );
             }
             let text = if self.db <= METER_FLOOR { "-∞ dB".to_string() } else { format!("{:.0} dB", self.db) };
             ui.label(RichText::new(text).monospace());

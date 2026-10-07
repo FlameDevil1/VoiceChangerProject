@@ -87,4 +87,3 @@ impl Shared {
         self.margin_gen.fetch_add(1, Relaxed);
     }
 }
-

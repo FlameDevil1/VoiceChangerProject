@@ -1,8 +1,8 @@
 //! Preset UI: a button grid for Simple mode and a manager (save, rename, delete, import,
 //! export) for Advanced mode.
 
-use super::widgets::{section, GREEN, RED};
 use super::App;
+use super::widgets::{GREEN, RED, section};
 use eframe::egui::{self, RichText};
 use voice_changer::presets::{Preset, Source};
 
@@ -11,8 +11,13 @@ use voice_changer::presets::{Preset, Source};
 pub enum Edit {
     #[default]
     None,
-    SaveAs { name: String, include_cleanup: bool },
-    Rename { name: String },
+    SaveAs {
+        name: String,
+        include_cleanup: bool,
+    },
+    Rename {
+        name: String,
+    },
     ConfirmDelete,
 }
 
@@ -90,7 +95,9 @@ impl App {
                 });
             }
             if modified && current.is_some() {
-                ui.label(RichText::new("* changed since loaded. Save it under a new name in Advanced mode.").small().weak());
+                ui.label(
+                    RichText::new("* changed since loaded. Save it under a new name in Advanced mode.").small().weak(),
+                );
             }
         });
         if let Some(name) = clicked {
@@ -102,7 +109,8 @@ impl App {
     pub(super) fn preset_manager(&mut self, ui: &mut egui::Ui) {
         let modified = self.preset_modified();
         let current = self.cfg.preset.clone();
-        let is_user = current.as_deref().and_then(|n| self.presets.find(n)).is_some_and(|e| e.source != Source::BuiltIn);
+        let is_user =
+            current.as_deref().and_then(|n| self.presets.find(n)).is_some_and(|e| e.source != Source::BuiltIn);
         let mut load = None;
 
         section(ui, "Presets", |ui| {
@@ -127,7 +135,10 @@ impl App {
                         }
                     }
                 });
-                if ui.add_enabled(is_user && modified, egui::Button::new("Save")).on_hover_text("Overwrite this preset").clicked()
+                if ui
+                    .add_enabled(is_user && modified, egui::Button::new("Save"))
+                    .on_hover_text("Overwrite this preset")
+                    .clicked()
                     && let Some(name) = &current
                 {
                     let include = self.presets.find(name).is_some_and(|e| e.preset.include_cleanup);
@@ -153,7 +164,10 @@ impl App {
                 if ui.button("Import…").on_hover_text("Add presets from .json files").clicked() {
                     self.import_presets();
                 }
-                if ui.add_enabled(current.is_some(), egui::Button::new("Export…")).on_hover_text("Save this preset as a .json file to share").clicked()
+                if ui
+                    .add_enabled(current.is_some(), egui::Button::new("Export…"))
+                    .on_hover_text("Save this preset as a .json file to share")
+                    .clicked()
                     && let Some(name) = &current
                 {
                     self.export_preset(name);
@@ -253,7 +267,10 @@ impl App {
     }
 
     fn import_presets(&mut self) {
-        let Some(files) = rfd::FileDialog::new().set_title("Import presets").add_filter("Voice Changer preset", &["json"]).pick_files()
+        let Some(files) = rfd::FileDialog::new()
+            .set_title("Import presets")
+            .add_filter("Voice Changer preset", &["json"])
+            .pick_files()
         else {
             return;
         };
@@ -272,7 +289,8 @@ impl App {
     }
 
     fn export_preset(&mut self, name: &str) {
-        let file = name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect::<String>();
+        let file =
+            name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect::<String>();
         let Some(path) = rfd::FileDialog::new()
             .set_title("Export preset")
             .add_filter("Voice Changer preset", &["json"])

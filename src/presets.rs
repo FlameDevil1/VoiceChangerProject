@@ -108,7 +108,11 @@ pub fn builtins() -> Vec<Preset> {
             "Male to female",
             none().with(Pitch, &[("semitones", 6.0), ("formant", 3.0)]).with(Eq, &[("low", -2.0), ("high_mid", 2.0)]),
         ),
-        builtin("Male", "Female to male", none().with(Pitch, &[("semitones", -6.0), ("formant", -3.0)]).with(Eq, &[("low", 2.0)])),
+        builtin(
+            "Male",
+            "Female to male",
+            none().with(Pitch, &[("semitones", -6.0), ("formant", -3.0)]).with(Eq, &[("low", 2.0)]),
+        ),
         builtin("Child", "Small and young", none().with(Pitch, &[("semitones", 8.0), ("formant", 5.0)])),
         builtin("Chipmunk", "Helium squeak", none().with(Pitch, &[("semitones", 8.0), ("formant", 8.0)])),
         builtin("Robot", "Monotone and metallic", none().with(Robot, &[]).with(Eq, &[("high_mid", 2.0)])),
@@ -121,7 +125,11 @@ pub fn builtins() -> Vec<Preset> {
                 .with(Reverb, &[("size", 60.0), ("decay", 2.0)])
                 .with_mix(Reverb, 0.2),
         ),
-        builtin("Telephone", "Old phone line", none().with(Radio, &[("low_cut", 300.0), ("high_cut", 3400.0), ("drive", 20.0)])),
+        builtin(
+            "Telephone",
+            "Old phone line",
+            none().with(Radio, &[("low_cut", 300.0), ("high_cut", 3400.0), ("drive", 20.0)]),
+        ),
         builtin(
             "Walkie-talkie",
             "Crunchy two-way radio",
@@ -130,7 +138,9 @@ pub fn builtins() -> Vec<Preset> {
         builtin(
             "Cave",
             "Huge echoing cave",
-            none().with(Reverb, &[("size", 100.0), ("decay", 6.0), ("damping", 25.0), ("predelay", 40.0)]).with_mix(Reverb, 0.4),
+            none()
+                .with(Reverb, &[("size", 100.0), ("decay", 6.0), ("damping", 25.0), ("predelay", 40.0)])
+                .with_mix(Reverb, 0.4),
         ),
         builtin(
             "Announcer",
@@ -328,7 +338,8 @@ impl PresetStore {
 
 fn read_preset(path: &Path) -> Result<Preset, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut p: Preset = serde_json::from_str(&text).map_err(|e| format!("{}: not a valid preset ({e})", path.display()))?;
+    let mut p: Preset =
+        serde_json::from_str(&text).map_err(|e| format!("{}: not a valid preset ({e})", path.display()))?;
     p.fx.normalize();
     Ok(p)
 }

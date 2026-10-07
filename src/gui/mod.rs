@@ -11,15 +11,15 @@ mod presets;
 mod widgets;
 
 use eframe::egui::{self, RichText};
-use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 use voice_changer::audio::engine::OutputInfo;
-use voice_changer::audio::{devices, Command, EngineHandle, EngineSettings, EngineState, Shared, Status};
+use voice_changer::audio::{Command, EngineHandle, EngineSettings, EngineState, Shared, Status, devices};
 use voice_changer::config::{Config, LatencyMode, ThemePref, UiMode};
-use voice_changer::dsp::{db_to_gain, simd, EffectKind, FxSettings};
+use voice_changer::dsp::{EffectKind, FxSettings, db_to_gain, simd};
 use voice_changer::presets::PresetStore;
-use widgets::{apply_theme, channel_label, device_combo, gain_row, section, status_dot, Meter, AMBER, GREEN, RED};
+use widgets::{AMBER, GREEN, Meter, RED, apply_theme, channel_label, device_combo, gain_row, section, status_dot};
 
 /// Meter redraw rates (focused, background). Measured ~0.45 % of one core per fps on a laptop
 /// iGPU, so the background rate matters most: the app usually sits behind a game or Discord.
@@ -220,7 +220,8 @@ impl App {
             ui.label(RichText::new(text).color(color));
         });
         let label = if active { "■  Stop" } else { "▶  Start" };
-        let button = egui::Button::new(RichText::new(label).size(18.0)).min_size(egui::vec2(ui.available_width(), 36.0));
+        let button =
+            egui::Button::new(RichText::new(label).size(18.0)).min_size(egui::vec2(ui.available_width(), 36.0));
         if ui.add(button).clicked() {
             if active {
                 self.engine.send(Command::Stop);
@@ -284,7 +285,8 @@ impl App {
                 let mut enabled = self.cfg.monitor_enabled;
                 ui.checkbox(&mut enabled, "Hear myself").on_hover_text("Play the processed voice to your headphones.");
                 let default_out = list.default_output.clone().unwrap_or_default();
-                let dev_changed = device_combo(ui, "monitor", &mut self.cfg.monitor, &list.outputs, &outputs, Some(&default_out));
+                let dev_changed =
+                    device_combo(ui, "monitor", &mut self.cfg.monitor, &list.outputs, &outputs, Some(&default_out));
                 if enabled != self.cfg.monitor_enabled || dev_changed {
                     self.cfg.monitor_enabled = enabled;
                     self.send_monitor();
@@ -372,7 +374,11 @@ impl App {
             ui.horizontal_wrapped(|ui| {
                 let sh = &self.engine.shared;
                 let bypass = sh.bypass.load(Relaxed);
-                if ui.add(egui::Button::new("Bypass effects").selected(bypass)).on_hover_text("Send your original voice").clicked() {
+                if ui
+                    .add(egui::Button::new("Bypass effects").selected(bypass))
+                    .on_hover_text("Send your original voice")
+                    .clicked()
+                {
                     sh.bypass.store(!bypass, Relaxed);
                 }
                 let mute = sh.mute.load(Relaxed);
@@ -413,7 +419,13 @@ impl App {
         let shared = self.engine.shared.clone();
         let active = self.is_active();
         section(ui, "Effects", |ui| {
-            ui.label(RichText::new("Effects that are off add no delay and use no CPU. The arrows change the processing order.").small().weak());
+            ui.label(
+                RichText::new(
+                    "Effects that are off add no delay and use no CPU. The arrows change the processing order.",
+                )
+                .small()
+                .weak(),
+            );
             let order = fx.order.clone();
             let n = order.len();
             for (i, kind) in order.into_iter().enumerate() {
@@ -464,7 +476,8 @@ impl App {
             let rate = self.status.sample_rate.max(1) as f32;
             let in_ms = sh.in_block.load(Relaxed) as f32 / rate * 1000.0;
             let dsp_ms = sh.dsp_latency.load(Relaxed) as f32 / rate * 1000.0;
-            let glitches = sh.cable.underruns.load(Relaxed) + sh.monitor.underruns.load(Relaxed) + sh.capture_xruns.load(Relaxed);
+            let glitches =
+                sh.cable.underruns.load(Relaxed) + sh.monitor.underruns.load(Relaxed) + sh.capture_xruns.load(Relaxed);
             let path_ms = |info: &Option<OutputInfo>, fill: f32| {
                 info.as_ref()
                     .filter(|i| !i.lost && i.sample_rate > 0)
@@ -500,7 +513,9 @@ impl App {
                     dsp_ms,
                     simd::level().label()
                 ));
-                for (label, info, st) in [("Virtual mic", &self.status.cable, &sh.cable), ("Headphones", &self.status.monitor, &sh.monitor)] {
+                for (label, info, st) in
+                    [("Virtual mic", &self.status.cable, &sh.cable), ("Headphones", &self.status.monitor, &sh.monitor)]
+                {
                     if let Some(i) = info.as_ref().filter(|i| !i.lost) {
                         ui.label(format!(
                             "{label}: {} @ {} Hz · buffer {:.1} ms (target {:.1}) · margin {:.0} ms · drift {:+.0} ppm",

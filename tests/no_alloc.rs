@@ -75,7 +75,8 @@ fn audio_path_never_allocates() {
         reverb.set(0, (i % 100) as f32);
         fx.get(EffectKind::Eq).set(2, ((i % 48) as f32 - 24.0) / 2.0);
         fx.get(EffectKind::Pitch).set(0, ((i / 50) % 13) as f32 - 6.0);
-        let params = CoreParams { bypass: (300..320).contains(&i), mute: (400..410).contains(&i), ..Default::default() };
+        let params =
+            CoreParams { bypass: (300..320).contains(&i), mute: (400..410).contains(&i), ..Default::default() };
         if i == 250
             && let Some(old) = core.set_chain(spare.take().unwrap())
         {

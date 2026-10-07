@@ -28,11 +28,7 @@ pub fn snr_db(reference: &[f32], test: &[f32]) -> f32 {
     let n = reference.len().min(test.len());
     let sig: f64 = reference[..n].iter().map(|s| (*s as f64).powi(2)).sum();
     let err: f64 = reference[..n].iter().zip(&test[..n]).map(|(r, t)| ((r - t) as f64).powi(2)).sum();
-    if err == 0.0 {
-        f32::INFINITY
-    } else {
-        (10.0 * (sig / err).log10()) as f32
-    }
+    if err == 0.0 { f32::INFINITY } else { (10.0 * (sig / err).log10()) as f32 }
 }
 
 /// Power-weighted mean frequency (Hz) of a Hann-windowed segment from the middle of `x`

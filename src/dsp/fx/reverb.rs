@@ -6,18 +6,54 @@
 //! slew the line lengths slowly, so dragging the slider never clicks. Output is the reverb only;
 //! the slot's mix control blends it with the dry voice.
 
-use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
 use crate::dsp::Processor;
+use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
 use std::sync::Arc;
 
 pub const SPEC: EffectSpec = EffectSpec {
     label: "Reverb",
     help: "Puts your voice in a space, from a small room to a cave.",
     params: &[
-        ParamSpec { key: "size", label: "Room size", min: 0.0, max: 100.0, default: 50.0, unit: " %", step: 1.0, help: "Bigger rooms have later, sparser echoes." },
-        ParamSpec { key: "decay", label: "Decay", min: 0.1, max: 10.0, default: 1.5, unit: " s", step: 0.1, help: "Time for the tail to fade by 60 dB." },
-        ParamSpec { key: "damping", label: "Damping", min: 0.0, max: 100.0, default: 50.0, unit: " %", step: 1.0, help: "Soft, absorbent rooms lose treble quickly." },
-        ParamSpec { key: "predelay", label: "Pre-delay", min: 0.0, max: 100.0, default: 10.0, unit: " ms", step: 1.0, help: "Gap before the reverb starts; adds clarity." },
+        ParamSpec {
+            key: "size",
+            label: "Room size",
+            min: 0.0,
+            max: 100.0,
+            default: 50.0,
+            unit: " %",
+            step: 1.0,
+            help: "Bigger rooms have later, sparser echoes.",
+        },
+        ParamSpec {
+            key: "decay",
+            label: "Decay",
+            min: 0.1,
+            max: 10.0,
+            default: 1.5,
+            unit: " s",
+            step: 0.1,
+            help: "Time for the tail to fade by 60 dB.",
+        },
+        ParamSpec {
+            key: "damping",
+            label: "Damping",
+            min: 0.0,
+            max: 100.0,
+            default: 50.0,
+            unit: " %",
+            step: 1.0,
+            help: "Soft, absorbent rooms lose treble quickly.",
+        },
+        ParamSpec {
+            key: "predelay",
+            label: "Pre-delay",
+            min: 0.0,
+            max: 100.0,
+            default: 10.0,
+            unit: " ms",
+            step: 1.0,
+            help: "Gap before the reverb starts; adds clarity.",
+        },
     ],
     mix_label: "Mix",
     default_mix: 0.25,

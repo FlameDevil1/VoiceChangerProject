@@ -1,6 +1,6 @@
 //! Effect panels, generated from each effect's spec table.
 
-use super::widgets::{arrow_button, slider_row, AMBER};
+use super::widgets::{AMBER, arrow_button, slider_row};
 use eframe::egui::{self, RichText};
 use std::sync::atomic::Ordering::Relaxed;
 use voice_changer::dsp::fx::denoise::STATUS_UNSUPPORTED_RATE;
