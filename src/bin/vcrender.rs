@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
-use voice_changer::dsp::{db_to_gain, CoreParams, FxSettings};
+use voice_changer::dsp::{db_to_gain, CoreParams, EffectKind, FxSettings};
 use voice_changer::offline::{self, WavFormat};
 
 const USAGE: &str = "\
@@ -22,7 +22,11 @@ Options:
       --out-gain <dB>   Output gain (default 0)
       --pitch <st>      Pitch shift in semitones, -12..12 (enables pitch & formant)
       --formant <st>    Formant shift in semitones, -12..12 (enables pitch & formant)
-      --mix <0..1>      Wet/dry mix of pitch & formant (default 1)
+      --fx <effect>[.<param>=<value>]
+                        Enable an effect, optionally setting one parameter or its mix.
+                        Repeatable. Examples: --fx reverb  --fx reverb.decay=3
+                        --fx reverb.mix=0.4  --fx robot  --fx denoise
+      --list-fx         List effects and their parameters
       --bypass          Skip effects (gains still apply)
       --channel <c>     mix | left | right (default mix)
       --pcm16           Write 16-bit PCM instead of 32-bit float
@@ -63,14 +67,18 @@ fn parse() -> Result<Opts, String> {
             "--in-gain" => o.params.input_gain = db_to_gain(num(args.next(), &a)?),
             "--out-gain" => o.params.output_gain = db_to_gain(num(args.next(), &a)?),
             "--pitch" => {
-                o.fx.pitch.semitones = num(args.next(), &a)?;
-                o.fx.pitch.enabled = true;
+                let v = num(args.next(), &a)?;
+                o.fx = std::mem::take(&mut o.fx).with(EffectKind::Pitch, &[("semitones", v)]);
             }
             "--formant" => {
-                o.fx.pitch.formant = num(args.next(), &a)?;
-                o.fx.pitch.enabled = true;
+                let v = num(args.next(), &a)?;
+                o.fx = std::mem::take(&mut o.fx).with(EffectKind::Pitch, &[("formant", v)]);
             }
-            "--mix" => o.fx.pitch.mix = num(args.next(), &a)?.clamp(0.0, 1.0),
+            "--fx" => parse_fx(&mut o.fx, &args.next().ok_or("--fx needs an effect")?)?,
+            "--list-fx" => {
+                list_fx();
+                std::process::exit(0);
+            }
             "--bypass" => o.params.bypass = true,
             "--pcm16" => o.format = WavFormat::Pcm16,
             "--block" => o.block = num(args.next(), &a)?.max(1.0) as usize,
@@ -91,6 +99,36 @@ fn parse() -> Result<Opts, String> {
         return Err("no input files".into());
     }
     Ok(o)
+}
+
+/// `reverb`, `reverb.decay=3` or `reverb.mix=0.4`.
+fn parse_fx(fx: &mut FxSettings, arg: &str) -> Result<(), String> {
+    let (name, assign) = match arg.split_once('.') {
+        Some((n, rest)) => (n, Some(rest)),
+        None => (arg, None),
+    };
+    let kind = EffectKind::from_key(name).ok_or_else(|| format!("unknown effect '{name}' (see --list-fx)"))?;
+    fx.set_enabled(kind, true);
+    if let Some(assign) = assign {
+        let (key, value) = assign.split_once('=').ok_or_else(|| format!("expected {name}.<param>=<value>"))?;
+        let v: f32 = value.parse().map_err(|_| format!("{arg}: '{value}' is not a number"))?;
+        if key == "mix" {
+            fx.set_mix(kind, v);
+        } else if !fx.set(kind, key, v) {
+            return Err(format!("{name} has no parameter '{key}' (see --list-fx)"));
+        }
+    }
+    Ok(())
+}
+
+fn list_fx() {
+    for kind in EffectKind::ALL {
+        let spec = kind.spec();
+        println!("{}  ({}; mix default {})", kind.key(), spec.label, spec.default_mix);
+        for p in spec.params {
+            println!("    {:<10} {:>7} .. {:<7} default {:<6} {}", p.key, p.min, p.max, p.default, p.unit.trim());
+        }
+    }
 }
 
 fn output_path(input: &Path, out: Option<&Path>, many: bool, with_ext: bool) -> PathBuf {

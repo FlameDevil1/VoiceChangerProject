@@ -3,9 +3,9 @@
 Real-time voice changer for Windows 10/11 that feeds a virtual microphone (VB-CABLE), so
 Discord, games, OBS and Zoom hear the processed voice.
 
-**Status: steps 1–3 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
-output, GUI, offline renderer, effect chain, limiter and pitch/formant shifting work. More effects
-come next.
+**Status: steps 1–4 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
+output, GUI, offline renderer, limiter, and eight effects: noise suppression, noise gate,
+pitch & formant, robot, equalizer, compressor, reverb and radio/telephone.
 
 ## Requirements
 
@@ -52,11 +52,15 @@ real output with the voice muted.
 cargo run --release --bin vcrender -- voice.mp3              # -> voice_vc.wav
 cargo run --release --bin vcrender -- *.wav -o out --pcm16   # batch, parallel
 cargo run --release --bin vcrender -- in.wav --pitch -5 --formant -3   # deeper voice
+cargo run --release --bin vcrender -- in.wav --fx denoise --fx reverb.decay=2.5 --fx radio
+cargo run --release --bin vcrender -- --list-fx                        # effects and parameters
 ```
 
 ## Tests
 
-`cargo test` runs unit tests plus golden-file regression tests (`tests/golden.rs`). Test inputs
+`cargo test` runs unit tests, behavioural tests for every effect (`tests/effects.rs`), a
+real-time safety test that fails if the audio path ever allocates (`tests/no_alloc.rs`), and
+golden-file regression tests (`tests/golden.rs`). Test inputs
 are generated in code, so no recordings are needed. When a golden check fails, the test writes
 `tests/golden/<case>.actual.wav` next to the golden so you can listen to both. If the change is
 intended, re-bless with:
@@ -81,7 +85,10 @@ Layout:
 | `src/dsp/drift.rs` | Clock-drift-compensating resampler |
 | `src/dsp/mod.rs` | `EngineCore` (gain, chain, bypass, limiter) and the `Processor` trait |
 | `src/dsp/chain.rs` | Effect slots, chain, `FxSettings` (serialisable) / `FxParams` (atomic) |
-| `src/dsp/pitch.rs` | YIN tracker and causal PSOLA pitch/formant shifter |
+| `src/dsp/pitch.rs` | YIN tracker and causal PSOLA engine (pitch, formant, monotone) |
+| `src/dsp/fx/` | One file per effect: its spec table (controls, presets) and processor |
+| `src/dsp/params.rs` | Spec types, atomic `EffectParams`, serialisable `EffectSettings` |
+| `src/dsp/biquad.rs` | RBJ cookbook filters |
 | `src/dsp/limiter.rs` | Lookahead brickwall limiter |
 | `src/offline/` | File I/O, offline render, test signals, analysis (RMS, SNR, pitch) |
 | `src/bin/vcrender.rs` | Command-line file renderer |

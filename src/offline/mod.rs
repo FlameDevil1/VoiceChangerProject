@@ -47,10 +47,11 @@ mod tests {
     fn render_is_block_size_invariant() {
         let x = signals::vowel(48_000, 0.5, 140.0);
         let params = CoreParams { input_gain: 0.7, output_gain: 1.2, ..Default::default() };
-        let mut fx = FxSettings::default();
-        fx.pitch.enabled = true;
-        fx.pitch.semitones = -3.0;
-        fx.pitch.formant = 2.0;
+        // Every effect at once, so block-boundary bugs anywhere in the chain show up here.
+        let mut fx = FxSettings::default().with(crate::dsp::EffectKind::Pitch, &[("semitones", -3.0), ("formant", 2.0)]);
+        for kind in crate::dsp::EffectKind::ALL {
+            fx.set_enabled(kind, true);
+        }
         let reference = render(&x, 48_000, params, &fx, DEFAULT_BLOCK);
         for block in [1, 64, 333, 4096] {
             let y = render(&x, 48_000, params, &fx, block);

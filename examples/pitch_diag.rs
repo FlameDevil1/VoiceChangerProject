@@ -1,5 +1,5 @@
 //! Diagnostics for the pitch shifter: pitch accuracy and spectral shape vs a chipmunk reference.
-use voice_changer::dsp::{CoreParams, FxSettings};
+use voice_changer::dsp::{CoreParams, EffectKind, FxSettings};
 use voice_changer::offline::{self, analysis, signals};
 
 /// Centroid restricted to [lo, hi] Hz (excludes the fundamental region).
@@ -28,8 +28,7 @@ fn main() {
     let band0 = band_centroid(&xs, 48_000, 400.0, 4000.0);
     println!("{:>6} {:>8} {:>8} {:>8} {:>8}", "shift", "f0", "full", "band", "rms");
     for (semi, fm) in [(-12.0f32, 0.0f32), (-5.0, 0.0), (4.0, 0.0), (7.0, 0.0), (12.0, 0.0), (0.0, 4.0), (0.0, -4.0), (7.0, 7.0)] {
-        let mut fx = FxSettings::default();
-        fx.pitch.enabled = true; fx.pitch.semitones = semi; fx.pitch.formant = fm;
+        let fx = FxSettings::default().with(EffectKind::Pitch, &[("semitones", semi), ("formant", fm)]);
         let y = st(&offline::render(&x, 48_000, CoreParams::default(), &fx, 480));
         println!("{:>3}/{:>2} {:>8.1} {:>8.2} {:>8.2} {:>8.2}", semi, fm,
             analysis::estimate_f0(&y, 48_000, 50.0, 800.0).unwrap_or(0.0),

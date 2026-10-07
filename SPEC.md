@@ -12,7 +12,7 @@ rendering (and therefore DSP testing) comes early.
 | UI renderer | `glow` (OpenGL), not `wgpu` | Measured: same CPU cost, ~25 % of the memory (92 MB vs 375 MB private). |
 | Licensing | **Undecided**; keep every dependency permissive (MIT/BSD/Apache) until it is | Leaves both free and paid open. Rules out GPL Rubber Band unless licensed. |
 | Pitch / formant | **In-house causal TD-PSOLA** (step 3) | ~0.06 ms algorithmic latency vs 20–60 ms for FFT/stretcher approaches; formants preserved by design; no third-party licence. |
-| Noise suppression | `nnnoiseless` (pure-Rust RNNoise, BSD) | 10 ms frames, 48 kHz native, CPU-only. |
+| Noise suppression | `nnnoiseless` (pure-Rust RNNoise, BSD) | 10 ms frames, 48 kHz native, CPU-only. 40+ dB on fan/rumble noise; weak on flat white hiss (use the gate for that). |
 | Internal sample rate | The mic's native rate (48 kHz on almost every Windows device) | WASAPI shared-mode capture only accepts the native format; outputs are opened at the same rate and Windows converts if needed. |
 | Target latency | **≤ 40 ms app-side** in Balanced mode, measured and shown in the UI | See latency budget below. |
 | Target hardware | Ryzen 7 7800X3D + RTX 4070 Super (dev laptop: Ryzen 7 7735HS) | Builds target `x86-64-v3` (AVX2+FMA) so DSP loops vectorise. The GPU makes AI voice conversion realistic as a stretch goal. |
@@ -63,6 +63,11 @@ rendering (and therefore DSP testing) comes early.
   defaults), so files rendered at -6 dB are at -6 dB from the first sample.
 - Denormals are flushed to zero (MXCSR FTZ/DAZ) at the top of every callback and offline render.
 - The always-on limiter also replaces NaN/inf with silence, so a DSP bug can't reach the cable.
+- **Enforced by a test** (`tests/no_alloc.rs`): a counting global allocator runs the full engine
+  with every effect on while toggling effects, moving parameters, bypassing, muting and swapping
+  chains, and asserts zero heap allocations or frees. It caught one: RNNoise's FFT library builds
+  a thread-local planner on first use, so each capture thread now warms it up in its first
+  callback, before any audio is sent.
 - Audio callbacks are wrapped in `catch_unwind`: a DSP bug silences that stream and triggers a
   rebuild instead of killing the app.
 
@@ -74,7 +79,8 @@ rendering (and therefore DSP testing) comes early.
 | Ring target: ½ input block + output block + margin (6 ms) | 21 ms |
 | WASAPI render buffer | 10 ms |
 | Limiter lookahead (always on) | 1 ms |
-| Pitch & formant (when on) | 0.06 ms |
+| Pitch & formant / robot (when on) | 0.06 ms |
+| Noise suppression (when on) | 20 ms (10 ms framing + 10 ms RNNoise overlap) |
 | **App-side total** | **≈ 42 ms** (Low mode ≈ 38 ms) |
 | VB-CABLE + receiving app | outside our control |
 
@@ -134,8 +140,37 @@ Named effects in the original spec are mostly presets over a smaller set of DSP 
 | Bit-crush / downsample | Low-bitrate codec |
 | Event generators | Hum, crackle, handling thumps, wind, plosive pops, gain drift/pumping |
 
-Fixed chain order: gate → noise suppression → pitch/formant → character → EQ → compressor →
-bad-mic/connection → **limiter (always last)**.
+Default chain order: noise suppression → gate → pitch/formant → robot → EQ → compressor →
+reverb → radio → (bad-mic/connection, step 6) → **limiter (always last)**. Noise suppression
+runs before the gate so the gate sees a clean signal. The order is stored per config/preset, and
+configs from older versions get new effects inserted at their default position.
+
+### Core effects: **done (step 4)**
+
+Every effect is declared by a spec table (`src/dsp/fx/*.rs`): keys, ranges, defaults, units,
+help text and presets. The GUI panel, config/preset serialisation and the `vcrender --fx` CLI are
+all generated from it, so adding an effect is one module plus one line in `chain.rs`.
+
+| Effect | Implementation | Cost* |
+|---|---|---|
+| Noise suppression | RNNoise; 48 kHz only (passes through and warns otherwise); voice-probability readout | 0.67 % |
+| Noise gate | Peak detector, 4 dB hysteresis, hold, fades linear in dB (release = time to close fully) | 0.07 % |
+| Pitch & formant | Causal PSOLA (step 3), presets: deeper, higher, male↔female, child, monster, chipmunk | 0.55 % |
+| Robot | PSOLA *monotone* mode (every period forced to one note) + ring mod + tuned comb | 0.54 % |
+| Equalizer | 5 RBJ biquads (100 Hz shelf, 350 Hz, 1 kHz, 3 kHz, 8 kHz shelf); flat bands are skipped (bit-exact) | 0.12 % |
+| Compressor | Feed-forward, 6 dB soft knee, gain-reduction readout | 0.23 % |
+| Reverb | 8-line FDN with Hadamard mixing, per-line damping, RT60-accurate decay, slewed size | 0.37 % |
+| Radio / telephone | 24 dB/oct band-pass, tanh drive, seeded static; telephone / AM / walkie presets | 0.19 % |
+
+\*Share of one Ryzen 7 7735HS laptop core, live. All eight together: 2.3 %; in the live engine,
+worst callback 4.5 % of its time budget.
+
+Verified by `tests/effects.rs`: every effect and preset is finite, bounded, silent on silence and
+block-size invariant; the gate removes ≥ 35 dB of background without clicks; the compressor's
+gain reduction matches theory within 1 dB; EQ bands hit their gain within 0.8 dB; reverb RT60
+within 35 % of the setting and stable at maximum settings; robot output stays within 4 Hz of its
+note over a 120→220 Hz glide; radio rejects ≥ 30 dB outside its band; RNNoise removes ≥ 12 dB
+of fan-like noise while keeping a vowel within 6 dB.
 
 ### Pitch & formant: **done (step 3)**
 
@@ -234,7 +269,8 @@ should check for VB-CABLE and link to it, not bundle it.
 2. ✅ Offline renderer (`EngineCore` over files), `vcrender` CLI, golden-file test harness.
 3. ✅ Effect chain (slots, crossfaded hot-swap, latency-compensated mix), always-on limiter,
    pitch/formant shifter, Effects panel, `vcrender --pitch/--formant`.
-4. Core effects: gate, RNNoise, EQ, compressor, reverb, robot, radio.
+4. ✅ Core effects: noise suppression, gate, EQ, compressor, reverb, robot, radio; spec-driven
+   effect panels; zero-allocation audio path enforced by a test.
 5. Modulation sliders (3A).
 6. Bad mic / bad connection (3B), monitor tap point.
 7. Presets (save/load/import/export, scenario presets).

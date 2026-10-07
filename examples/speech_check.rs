@@ -1,6 +1,6 @@
 //! Measures pitch accuracy of the shifter on a real speech file, frame by frame.
 //!   cargo run --release --example speech_check -- speech.wav [out_dir]
-use voice_changer::dsp::{CoreParams, FxSettings};
+use voice_changer::dsp::{CoreParams, EffectKind, FxSettings};
 use voice_changer::offline::{self, analysis, WavFormat};
 
 fn main() {
@@ -14,8 +14,7 @@ fn main() {
     println!("{}: {:.1} s @ {} Hz", path.display(), a.duration_secs(), rate);
     println!("{:>12} {:>7} {:>9} {:>9} {:>8} {:>7}", "setting", "voiced", "median", "within3%", "level", "peak");
     for (st, fm) in [(0.0f32, 0.0f32), (-5.0, -3.0), (-12.0, 0.0), (5.0, 3.0), (7.0, 0.0), (12.0, 0.0), (0.0, 5.0)] {
-        let mut fx = FxSettings::default();
-        fx.pitch.enabled = true; fx.pitch.semitones = st; fx.pitch.formant = fm;
+        let fx = FxSettings::default().with(EffectKind::Pitch, &[("semitones", st), ("formant", fm)]);
         let y = offline::render(&x, rate, CoreParams::default(), &fx, 480);
         let want = 2f32.powf(st / 12.0);
         let mut ratios = Vec::new();

@@ -1,9 +1,12 @@
 //! DSP building blocks. Everything in here must be real-time safe once constructed:
 //! no allocation, locking or I/O inside `process` methods.
 
+pub mod biquad;
 pub mod chain;
 pub mod drift;
+pub mod fx;
 pub mod limiter;
+pub mod params;
 pub mod pitch;
 pub mod shared_params;
 pub mod util;
@@ -264,10 +267,7 @@ mod tests {
     #[test]
     fn chain_swap_crossfades_and_retires_old_chain() {
         use crate::offline::signals;
-        let fx = FxParams::from_settings(&FxSettings {
-            pitch: chain::PitchSettings { enabled: true, semitones: 7.0, ..Default::default() },
-            ..Default::default()
-        });
+        let fx = FxParams::from_settings(&FxSettings::default().with(EffectKind::Pitch, &[("semitones", 7.0)]));
         let mut core = EngineCore::with_chain(48_000.0, 480, Chain::empty());
         let x = signals::vowel(48_000, 0.5, 150.0);
         let mut y = x.clone();

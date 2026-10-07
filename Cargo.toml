@@ -20,6 +20,8 @@ cpal = { version = "0.18.2", features = ["realtime"] }
 eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "accesskit", "links"] }
 hound = "3.5.1"
 log = "0.4.34"
+# Pure-Rust port of RNNoise (BSD-3-Clause); library only.
+nnnoiseless = { version = "0.5.2", default-features = false }
 rtrb = "0.4.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

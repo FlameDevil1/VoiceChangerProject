@@ -1,5 +1,5 @@
 //! Formant diagnostics: spectral envelope peaks (F1/F2) before and after shifting.
-use voice_changer::dsp::{CoreParams, FxSettings};
+use voice_changer::dsp::{CoreParams, EffectKind, FxSettings};
 use voice_changer::offline::{self, signals};
 
 fn harm_db(x: &[f32], f: f64) -> f64 {
@@ -32,9 +32,7 @@ fn main() {
     let seg = |y: &[f32]| y[19200..19200 + 8192].to_vec();
     println!("{:>8} {:>6} {:>6} {:>6}   (expected F1 700*r, F2 1220*r, F3 2600*r)", "formant", "F1", "F2", "F3");
     for fm in [0.0f32, -4.0, 4.0, -8.0, 8.0] {
-        let mut fx = FxSettings::default();
-        fx.pitch.enabled = true;
-        fx.pitch.formant = fm;
+        let fx = FxSettings::default().with(EffectKind::Pitch, &[("formant", fm)]);
         let y = seg(&offline::render(&x, 48_000, CoreParams::default(), &fx, 480));
         let r = 2f64.powf(fm as f64 / 12.0);
         println!("{:>5} r{:.2} {:>6.0} {:>6.0} {:>6.0}   (exp {:.0} {:.0} {:.0})", fm, r,

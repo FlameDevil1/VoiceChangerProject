@@ -22,26 +22,7 @@
 //! Unvoiced sounds (s, f, breaths) are passed through with pitch ratio 1, so noise is not
 //! warped, but formant shifting still applies so the vocal character stays consistent.
 
-use super::shared_params::{AtomicF32, SlotParams};
 use super::util::HannTable;
-use super::Processor;
-use std::sync::Arc;
-
-/// Live parameters for the pitch/formant effect (written by the UI, read per block).
-#[derive(Debug)]
-pub struct PitchParams {
-    pub slot: Arc<SlotParams>,
-    /// Pitch shift in semitones (fractional values allowed; cents are folded in by the UI).
-    pub semitones: AtomicF32,
-    /// Formant shift in semitones: + = smaller vocal tract (younger/lighter), - = bigger/deeper.
-    pub formant: AtomicF32,
-}
-
-impl Default for PitchParams {
-    fn default() -> Self {
-        Self { slot: Arc::new(SlotParams::default()), semitones: AtomicF32::new(0.0), formant: AtomicF32::new(0.0) }
-    }
-}
 
 pub const MAX_SHIFT_SEMITONES: f32 = 12.0;
 const FMIN: f32 = 60.0;
@@ -277,8 +258,34 @@ struct Grain {
     gain: f32,
 }
 
+/// Per-block controls for the shifter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PsolaControls {
+    /// Pitch ratio (2.0 = one octave up).
+    pub ratio: f64,
+    /// Formant ratio (> 1 = smaller vocal tract).
+    pub formant: f64,
+    /// 0 = natural intonation, 1 = every period forced to `target_hz` (robot monotone).
+    pub monotone: f64,
+    pub target_hz: f64,
+}
+
+impl Default for PsolaControls {
+    fn default() -> Self {
+        Self { ratio: 1.0, formant: 1.0, monotone: 0.0, target_hz: 110.0 }
+    }
+}
+
+impl PsolaControls {
+    pub fn from_semitones(pitch: f32, formant: f32) -> Self {
+        let st = pitch.clamp(-MAX_SHIFT_SEMITONES, MAX_SHIFT_SEMITONES) as f64;
+        let fm = formant.clamp(-MAX_SHIFT_SEMITONES, MAX_SHIFT_SEMITONES) as f64;
+        Self { ratio: 2f64.powf(st / 12.0), formant: 2f64.powf(fm / 12.0), ..Default::default() }
+    }
+}
+
 pub struct PitchShifter {
-    params: Arc<PitchParams>,
+    controls: PsolaControls,
     rate: f32,
     hist: Vec<f32>,
     mask: usize,
@@ -295,16 +302,14 @@ pub struct PitchShifter {
     mark_voiced: bool,
     unvoiced_period: f64,
     max_period: f64,
-    ratio: f64,
-    formant: f64,
     /// Right half-length of the most recently created grain.
     last_half_r: f64,
 }
 
 impl PitchShifter {
-    pub fn new(params: Arc<PitchParams>) -> Self {
+    pub fn new() -> Self {
         Self {
-            params,
+            controls: PsolaControls::default(),
             rate: 0.0,
             hist: Vec::new(),
             mask: 0,
@@ -320,8 +325,6 @@ impl PitchShifter {
             mark_voiced: false,
             unvoiced_period: 240.0,
             max_period: 800.0,
-            ratio: 1.0,
-            formant: 1.0,
             last_half_r: 240.0,
         }
     }
@@ -359,8 +362,15 @@ impl PitchShifter {
 
     fn make_grain(&mut self, p: f64) -> Grain {
         let (a, period, voiced) = self.analysis_mark(p);
-        let ratio = if voiced { self.ratio } else { 1.0 };
-        let step = self.formant;
+        let c = self.controls;
+        let ratio = if voiced {
+            // Monotone pulls each period towards the target pitch: ratio = target / input.
+            let towards = c.target_hz * period / self.rate as f64;
+            (c.ratio * towards.powf(c.monotone)).clamp(0.25, 4.0)
+        } else {
+            1.0
+        };
+        let step = c.formant.clamp(0.5, 2.0);
         let half_r = period / step;
         let half_l = self.last_half_r;
         self.last_half_r = half_r;
@@ -401,8 +411,18 @@ impl PitchShifter {
     }
 }
 
-impl Processor for PitchShifter {
-    fn prepare(&mut self, sample_rate: f32, _max_block: usize) {
+impl Default for PitchShifter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PitchShifter {
+    pub fn set_controls(&mut self, c: PsolaControls) {
+        self.controls = c;
+    }
+
+    pub fn prepare(&mut self, sample_rate: f32) {
         self.rate = sample_rate;
         self.max_period = (sample_rate / FMIN) as f64;
         self.unvoiced_period = (sample_rate * 0.005) as f64;
@@ -414,12 +434,7 @@ impl Processor for PitchShifter {
         self.reset();
     }
 
-    fn process(&mut self, buf: &mut [f32]) {
-        let st = self.params.semitones.load().clamp(-MAX_SHIFT_SEMITONES, MAX_SHIFT_SEMITONES);
-        let fm = self.params.formant.load().clamp(-MAX_SHIFT_SEMITONES, MAX_SHIFT_SEMITONES);
-        self.ratio = 2f64.powf(st as f64 / 12.0);
-        self.formant = 2f64.powf(fm as f64 / 12.0);
-
+    pub fn process(&mut self, buf: &mut [f32]) {
         for s in buf.iter_mut() {
             let n = self.n as f64;
             self.hist[(self.n as usize) & self.mask] = *s;
@@ -468,11 +483,13 @@ impl Processor for PitchShifter {
         }
     }
 
-    fn latency(&self) -> usize {
+    /// Algorithmic latency in samples (the interpolator pad).
+    pub fn latency(&self) -> usize {
         PAD as usize
     }
 
-    fn reset(&mut self) {
+    /// Clear state without reallocating (real-time safe).
+    pub fn reset(&mut self) {
         self.hist.fill(0.0);
         self.n = 0;
         self.tracker.reset();
@@ -492,11 +509,13 @@ mod tests {
     use crate::offline::{analysis, signals};
 
     fn shift(x: &[f32], st: f32, fm: f32, block: usize) -> Vec<f32> {
-        let params = Arc::new(PitchParams::default());
-        params.semitones.store(st);
-        params.formant.store(fm);
-        let mut p = PitchShifter::new(params);
-        p.prepare(48_000.0, block);
+        run(x, PsolaControls::from_semitones(st, fm), block)
+    }
+
+    fn run(x: &[f32], c: PsolaControls, block: usize) -> Vec<f32> {
+        let mut p = PitchShifter::new();
+        p.prepare(48_000.0);
+        p.set_controls(c);
         let mut y = x.to_vec();
         for c in y.chunks_mut(block) {
             p.process(c);
@@ -563,6 +582,18 @@ mod tests {
             assert!((f0 - 140.0).abs() < 3.0, "formant {fm}: pitch moved to {f0}");
             let c = analysis::spectral_centroid(steady(&y), 48_000) / centroid_in;
             assert!((lo..hi).contains(&c), "formant {fm}: centroid ratio {c:.2}");
+        }
+    }
+
+    #[test]
+    fn monotone_flattens_intonation_to_target() {
+        // A vowel gliding 120 -> 220 Hz comes out flat at 150 Hz.
+        let x = signals::vowel_glide(48_000, 1.0, 120.0, 220.0);
+        let c = PsolaControls { monotone: 1.0, target_hz: 150.0, ..Default::default() };
+        let y = run(&x, c, 480);
+        for start in [12_000, 24_000, 36_000] {
+            let f = analysis::estimate_f0(&y[start..start + 4800], 48_000, 50.0, 800.0).unwrap();
+            assert!((f - 150.0).abs() < 4.0, "at {start}: {f}");
         }
     }
 

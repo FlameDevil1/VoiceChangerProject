@@ -113,10 +113,15 @@ fn config_path() -> PathBuf {
 impl Config {
     pub fn load() -> Self {
         match std::fs::read_to_string(config_path()) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                log::warn!("config.json unreadable ({e}); using defaults");
-                Self::default()
-            }),
+            Ok(text) => {
+                let mut cfg: Self = serde_json::from_str(&text).unwrap_or_else(|e| {
+                    log::warn!("config.json unreadable ({e}); using defaults");
+                    Self::default()
+                });
+                // Effects added since this config was written join the chain at their default spot.
+                cfg.fx.normalize();
+                cfg
+            }
             Err(_) => Self::default(),
         }
     }

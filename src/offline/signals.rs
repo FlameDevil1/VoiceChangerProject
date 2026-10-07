@@ -3,30 +3,7 @@
 
 use std::f64::consts::TAU;
 
-/// Small, fast, seeded PRNG (xorshift64*). Effects with randomness (bad-connection, crackle)
-/// must use a seeded generator like this so presets and tests are reproducible.
-#[derive(Clone, Debug)]
-pub struct Rng(u64);
-
-impl Rng {
-    pub fn new(seed: u64) -> Self {
-        Self(seed.max(1))
-    }
-
-    pub fn next_u64(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.0 = x;
-        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
-    /// Uniform in [0, 1).
-    pub fn next_f32(&mut self) -> f32 {
-        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
-    }
-}
+pub use crate::dsp::util::Rng;
 
 fn len(rate: u32, secs: f64) -> usize {
     (rate as f64 * secs).round() as usize
@@ -59,11 +36,31 @@ pub fn noise(rate: u32, secs: f64, amp: f32, seed: u64) -> Vec<f32> {
     (0..len(rate, secs)).map(|_| amp * (2.0 * rng.next_f32() - 1.0)).collect()
 }
 
+/// Brown-ish noise (leaky-integrated white noise): rumbly, like fans, PC hum and traffic.
+/// Normalised to peak `amp`.
+pub fn brown_noise(rate: u32, secs: f64, amp: f32, seed: u64) -> Vec<f32> {
+    let mut acc = 0.0f32;
+    let raw: Vec<f32> = noise(rate, secs, 1.0, seed)
+        .into_iter()
+        .map(|s| {
+            acc = acc * 0.995 + s * 0.05;
+            acc
+        })
+        .collect();
+    let peak = raw.iter().fold(0.0f32, |m, s| m.max(s.abs())).max(1e-9);
+    raw.into_iter().map(|s| s * amp / peak).collect()
+}
+
 /// A synthetic sustained "ah" vowel: a band-limited glottal source at `f0` through a Klatt-style
 /// cascade of three formant resonators (F1 700 Hz, F2 1220 Hz, F3 2600 Hz). Pitch and formants are known
 /// exactly, which is what pitch- and formant-shift tests need, and it sounds voice-like enough to
 /// judge effects by ear.
 pub fn vowel(rate: u32, secs: f64, f0: f64) -> Vec<f32> {
+    vowel_glide(rate, secs, f0, f0)
+}
+
+/// The same vowel with its pitch gliding linearly from `f0_start` to `f0_end` (intonation).
+pub fn vowel_glide(rate: u32, secs: f64, f0_start: f64, f0_end: f64) -> Vec<f32> {
     let n = len(rate, secs);
     let sr = rate as f64;
     // Glottal source: one period of harmonics with -6 dB/octave rolloff (glottal -12 dB plus
@@ -71,21 +68,21 @@ pub fn vowel(rate: u32, secs: f64, f0: f64) -> Vec<f32> {
     // Nyquist, stored as a wavetable and played back with a phase accumulator (cheap enough for
     // minute-long test signals).
     const TABLE: usize = 4096;
-    let harmonics = ((sr * 0.45) / f0) as usize;
+    let harmonics = ((sr * 0.45) / f0_start.max(f0_end)) as usize;
     let table: Vec<f64> = (0..=TABLE)
         .map(|i| {
             let ph = TAU * i as f64 / TABLE as f64;
             (1..=harmonics).map(|h| (ph * h as f64).sin() / h as f64).sum()
         })
         .collect();
-    let inc = f0 / sr * TABLE as f64;
     let mut phase = 0.0f64;
     let mut src: Vec<f64> = (0..n)
-        .map(|_| {
+        .map(|k| {
             let i = phase as usize;
             let f = phase - i as f64;
             let v = table[i] + (table[i + 1] - table[i]) * f;
-            phase += inc;
+            let f0 = f0_start + (f0_end - f0_start) * k as f64 / n.max(1) as f64;
+            phase += f0 / sr * TABLE as f64;
             if phase >= TABLE as f64 {
                 phase -= TABLE as f64;
             }

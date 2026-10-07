@@ -5,7 +5,7 @@
 //!   cargo run --release --example smoke -- 10 Speakers    same, into a real output with the voice muted
 //!
 //! Nothing is recorded, and nothing audible is played (monitoring stays off).
-//! Set VC_SMOKE_PITCH=1 to run with pitch -5 / formant -3 enabled.
+//! Set VC_SMOKE_PITCH=1 to run with pitch -5 / formant -3 enabled, VC_SMOKE_ALL=1 for every effect.
 
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
@@ -37,14 +37,18 @@ fn main() {
     let shared = Arc::new(Shared::default());
     shared.mute.store(test_out.is_some(), Relaxed);
     if std::env::var_os("VC_SMOKE_PITCH").is_some() {
-        let mut fx = FxSettings::default();
-        fx.pitch.enabled = true;
-        fx.pitch.semitones = -5.0;
-        fx.pitch.formant = -3.0;
+        let fx = FxSettings::default().with(EffectKind::Pitch, &[("semitones", -5.0), ("formant", -3.0)]);
+        shared.fx.store(&fx);
+    }
+    if std::env::var_os("VC_SMOKE_ALL").is_some() {
+        let mut fx = FxSettings::default().with(EffectKind::Pitch, &[("semitones", -5.0), ("formant", -3.0)]);
+        for kind in EffectKind::ALL {
+            fx.set_enabled(kind, true);
+        }
         shared.fx.store(&fx);
     }
     let engine = EngineHandle::spawn(shared.clone(), Box::new(|| {}));
-    let chain_order = vec![EffectKind::Pitch];
+    let chain_order = EffectKind::ALL.to_vec();
     engine.send(Command::Start(EngineSettings { cable, chain_order, ..Default::default() }));
     for _ in 0..seconds {
         std::thread::sleep(Duration::from_secs(1));

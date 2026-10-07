@@ -360,6 +360,7 @@ impl Controller {
             sink_rx,
             ret_tx,
             poisoned: false,
+            needs_warm_up: true,
         };
 
         let stream = match supported.sample_format() {
@@ -555,10 +556,16 @@ struct CaptureState {
     sink_rx: Consumer<SinkMsg>,
     ret_tx: Producer<Retired>,
     poisoned: bool,
+    /// Per-thread library setup still to do (see `denoise::warm_up_thread`).
+    needs_warm_up: bool,
 }
 
 impl CaptureState {
     fn process<T: Copy>(&mut self, data: &[T], to_f32: impl Fn(T) -> f32 + Copy) {
+        if std::mem::take(&mut self.needs_warm_up) {
+            // One-time, first callback of this thread: the only allocation the audio path makes.
+            dsp::fx::denoise::warm_up_thread();
+        }
         let start = Instant::now();
         // Anything replaced is handed back for deallocation off the audio thread (it is only
         // dropped here if the return queue is full, which would need a burst of changes).
