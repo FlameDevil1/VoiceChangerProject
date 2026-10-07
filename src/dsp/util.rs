@@ -54,28 +54,38 @@ impl Rng {
 pub struct DelayLine {
     buf: Vec<f32>,
     pos: usize,
+    delay: usize,
 }
 
 impl DelayLine {
     pub fn new(delay: usize) -> Self {
-        Self { buf: vec![0.0; delay], pos: 0 }
+        Self::with_capacity(delay, delay)
+    }
+
+    /// Room for delays up to `capacity`; the delay can change later without reallocating.
+    pub fn with_capacity(capacity: usize, delay: usize) -> Self {
+        Self { buf: vec![0.0; capacity + 1], pos: 0, delay: delay.min(capacity) }
     }
 
     pub fn delay(&self) -> usize {
-        self.buf.len()
+        self.delay
+    }
+
+    /// Change the delay (clamped to capacity). Real-time safe.
+    pub fn set_delay(&mut self, delay: usize) {
+        self.delay = delay.min(self.buf.len() - 1);
     }
 
     /// Push one sample, return the sample from `delay` samples ago.
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {
-        if self.buf.is_empty() {
+        if self.delay == 0 {
             return x;
         }
-        let y = std::mem::replace(&mut self.buf[self.pos], x);
-        self.pos += 1;
-        if self.pos == self.buf.len() {
-            self.pos = 0;
-        }
+        let n = self.buf.len();
+        self.buf[self.pos] = x;
+        let y = self.buf[(self.pos + n - self.delay) % n];
+        self.pos = (self.pos + 1) % n;
         y
     }
 

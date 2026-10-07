@@ -1,9 +1,15 @@
 //! Noise suppression with RNNoise (nnnoiseless, a pure-Rust port).
 //!
-//! RNNoise works on fixed 10 ms frames at 48 kHz. Samples are collected into a frame, and a FIFO
-//! pre-filled with one frame of silence keeps output flowing while the next frame fills. Total
-//! delay is 20 ms: 10 ms of framing plus RNNoise's own 10 ms overlap. This only applies while
-//! the effect is on; disabled, it is removed from the chain.
+//! RNNoise works on fixed 10 ms frames at 48 kHz and adds 10 ms of its own (overlap-add).
+//!
+//! - **Direct mode** (normal): while audio arrives in whole 10 ms frames, which is what WASAPI
+//!   delivers at 48 kHz, each frame is processed as soon as it is complete. Total delay: 10 ms.
+//! - **Buffered mode** (fallback): the first time a block that isn't a whole number of frames
+//!   arrives, the effect switches for good to collecting samples into frames, with a FIFO pre-filled
+//!   with one frame of silence. Total delay: 20 ms. The switch costs one 10 ms gap.
+//!
+//! Both modes compute identical frames; buffered output is exactly one frame later. Disabled, the
+//! effect is removed from the chain and adds nothing.
 //!
 //! At sample rates other than 48 kHz the effect passes audio through and reports status 1, so
 //! the UI can explain how to switch the mic to 48 kHz.
@@ -15,7 +21,7 @@ use std::sync::Arc;
 
 pub const SPEC: EffectSpec = EffectSpec {
     label: "Noise suppression",
-    help: "AI noise removal (RNNoise): fans, keyboards, traffic. Adds 20 ms of delay while on.",
+    help: "AI noise removal (RNNoise): fans, keyboards, traffic. Adds 10 ms of delay while on.",
     params: &[],
     mix_label: "Strength",
     default_mix: 1.0,
@@ -23,6 +29,8 @@ pub const SPEC: EffectSpec = EffectSpec {
 };
 
 pub const STATUS_UNSUPPORTED_RATE: u32 = 1;
+/// Running in buffered (20 ms) mode because the audio arrived in uneven blocks.
+pub const STATUS_BUFFERED: u32 = 2;
 
 const FRAME: usize = DenoiseState::FRAME_SIZE;
 /// RNNoise expects 16-bit sample values in f32.
@@ -51,6 +59,7 @@ pub struct Denoise {
     read: usize,
     write: usize,
     vad: f32,
+    buffered: bool,
 }
 
 impl Denoise {
@@ -65,6 +74,7 @@ impl Denoise {
             read: 0,
             write: FRAME,
             vad: 0.0,
+            buffered: false,
         }
     }
 }
@@ -81,6 +91,23 @@ impl Processor for Denoise {
 
     fn process(&mut self, buf: &mut [f32]) {
         let Some(state) = self.state.as_mut() else { return };
+        if !self.buffered && !buf.len().is_multiple_of(FRAME) {
+            self.buffered = true;
+            self.params.status.store(STATUS_BUFFERED, std::sync::atomic::Ordering::Relaxed);
+        }
+        if !self.buffered {
+            for chunk in buf.chunks_exact_mut(FRAME) {
+                for (dst, s) in self.frame_in.iter_mut().zip(chunk.iter()) {
+                    *dst = *s * SCALE;
+                }
+                self.vad = state.process_frame(&mut self.frame_out, &self.frame_in);
+                for (s, v) in chunk.iter_mut().zip(self.frame_out.iter()) {
+                    *s = *v / SCALE;
+                }
+            }
+            self.params.meter.store(self.vad);
+            return;
+        }
         for s in buf.iter_mut() {
             self.frame_in[self.filled] = *s * SCALE;
             self.filled += 1;
@@ -99,7 +126,15 @@ impl Processor for Denoise {
     }
 
     fn latency(&self) -> usize {
-        if self.state.is_some() { 2 * FRAME } else { 0 }
+        match (&self.state, self.buffered) {
+            (None, _) => 0,
+            (Some(_), false) => FRAME,
+            (Some(_), true) => 2 * FRAME,
+        }
+    }
+
+    fn max_latency(&self) -> usize {
+        2 * FRAME
     }
 
     /// Clears the framing buffers. The network's internal state is kept: rebuilding it would
@@ -110,5 +145,10 @@ impl Processor for Denoise {
         self.read = 0;
         self.write = FRAME;
         self.vad = 0.0;
+        // A fresh start gets another chance at direct mode.
+        if self.buffered {
+            self.buffered = false;
+            self.params.status.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }

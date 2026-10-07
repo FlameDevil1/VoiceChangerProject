@@ -42,6 +42,10 @@ rendering (and therefore DSP testing) comes early.
 - **Outputs hot-swap**: turning monitoring on/off or changing the cable device sends a new ring
   producer to the running capture callback through a lock-free queue. The other output never
   glitches. Old producers are returned and freed off the audio thread.
+- **Single instance**: a named mutex keeps one copy running; launching again signals the running
+  copy (named event) to show its window, even from the tray, and exits before touching the log.
+- **Monitoring safety**: "Hear myself" warns when the output is a speaker (Windows form factor),
+  and reminds you to use headphones when the device type is unknown (common for HDMI monitors).
 - **Per-stream recovery**: if the headphones are unplugged only the monitor stream is retried;
   the virtual mic keeps working. If the mic disappears the engine retries once a second.
 
@@ -80,7 +84,7 @@ rendering (and therefore DSP testing) comes early.
 | WASAPI render buffer | 10 ms |
 | Limiter lookahead (always on) | 1 ms |
 | Pitch & formant / robot (when on) | 0.06 ms |
-| Noise suppression (when on) | 20 ms (10 ms framing + 10 ms RNNoise overlap) |
+| Noise suppression (when on) | 10 ms (RNNoise overlap; frames processed as they complete). Falls back to 20 ms if audio ever arrives in uneven blocks |
 | **App-side total** | **≈ 42 ms** (Low mode ≈ 38 ms) |
 | VB-CABLE + receiving app | outside our control |
 
@@ -153,7 +157,7 @@ all generated from it, so adding an effect is one module plus one line in `chain
 
 | Effect | Implementation | Cost* |
 |---|---|---|
-| Noise suppression | RNNoise; 48 kHz only (passes through and warns otherwise); voice-probability readout | 0.67 % |
+| Noise suppression | RNNoise; 10 ms in direct mode (20 ms fallback); 48 kHz only (passes through and warns otherwise); voice-probability readout | 0.67 % |
 | Noise gate | Peak detector, 4 dB hysteresis, hold, fades linear in dB (release = time to close fully) | 0.07 % |
 | Pitch & formant | Causal PSOLA (step 3), presets: deeper, higher, male↔female, child, monster, chipmunk | 0.55 % |
 | Robot | PSOLA *monotone* mode (every period forced to one note) + ring mod + tuned comb | 0.54 % |

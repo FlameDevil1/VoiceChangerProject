@@ -41,10 +41,20 @@ pub struct App {
     last_meter_update: Instant,
     presets: PresetStore,
     preset_ui: presets::PresetUi,
+    /// Keeps this process the single running instance.
+    _instance: crate::single_instance::Guard,
+}
+
+/// Show, restore and focus the main window (another launch, tray click or hotkey asked for it).
+pub fn bring_to_front(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    ctx.request_repaint();
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, cfg: Config) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, cfg: Config, instance: crate::single_instance::Guard) -> Self {
         let shared = Arc::new(Shared::default());
         shared.input_gain.store(db_to_gain(cfg.input_gain_db));
         shared.output_gain.store(db_to_gain(cfg.output_gain_db));
@@ -72,6 +82,7 @@ impl App {
             last_meter_update: Instant::now(),
             presets: PresetStore::load(&PresetStore::default_dir()),
             preset_ui: Default::default(),
+            _instance: instance,
         }
     }
 
@@ -294,6 +305,33 @@ impl App {
                 }
                 ui.end_row();
             });
+
+            let listening = match &self.cfg.monitor {
+                None => list.default_output_listening,
+                Some(m) => list
+                    .outputs
+                    .iter()
+                    .find(|d| d.id == m.id || d.name == m.name)
+                    .map_or(devices::Listening::Unknown, |d| d.listening),
+            };
+            if self.cfg.monitor_enabled {
+                match listening {
+                    devices::Listening::OutLoud => {
+                        ui.colored_label(
+                            AMBER,
+                            "⚠ \"Hear myself\" is playing through speakers. Your mic will pick it up and may howl; use headphones.",
+                        );
+                    }
+                    devices::Listening::Unknown => {
+                        ui.label(
+                            RichText::new("Use headphones for \"Hear myself\": if this device plays out loud, your mic will pick it up.")
+                                .small()
+                                .weak(),
+                        );
+                    }
+                    devices::Listening::Ears => {}
+                }
+            }
 
             self.cable_indicator(ui);
         });

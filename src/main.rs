@@ -2,11 +2,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod gui;
+mod single_instance;
 
 use eframe::egui;
+use single_instance::Instance;
 use voice_changer::config::Config;
 
 fn main() -> eframe::Result {
+    // Before anything else (even logging, which rotates the log file): if the app is already
+    // running, ask it to show its window and quit.
+    let guard = match single_instance::acquire() {
+        Instance::Secondary => return Ok(()),
+        Instance::Primary(guard) => guard,
+    };
+
     voice_changer::logging::init();
     log::info!("Voice Changer {} starting", env!("CARGO_PKG_VERSION"));
     let cfg = Config::load();
@@ -23,7 +32,15 @@ fn main() -> eframe::Result {
         stencil_buffer: 0,
         ..Default::default()
     };
-    let result = eframe::run_native("Voice Changer", options, Box::new(|cc| Ok(Box::new(gui::App::new(cc, cfg)))));
+    let result = eframe::run_native(
+        "Voice Changer",
+        options,
+        Box::new(|cc| {
+            let ctx = cc.egui_ctx.clone();
+            guard.listen(move || gui::bring_to_front(&ctx));
+            Ok(Box::new(gui::App::new(cc, cfg, guard)))
+        }),
+    );
     log::info!("exit");
     result
 }

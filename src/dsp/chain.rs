@@ -248,7 +248,7 @@ impl Slot {
         let on = if params.slot.enabled() { 1.0 } else { 0.0 };
         Self {
             kind,
-            dry_delay: DelayLine::new(fx.latency()),
+            dry_delay: DelayLine::with_capacity(fx.max_latency(), fx.latency()),
             fx,
             enable: SmoothedValue::new(on, sample_rate, FADE_SECONDS),
             mix: SmoothedValue::new(params.slot.mix.load(), sample_rate, FADE_SECONDS),
@@ -285,6 +285,8 @@ impl Slot {
         let input = &mut self.input[..buf.len()];
         input.copy_from_slice(buf);
         self.fx.process(buf);
+        // Some effects change latency at runtime (noise suppression's framing mode).
+        self.dry_delay.set_delay(self.fx.latency());
 
         let fully_wet = self.mix.is_settled() && self.mix.current() == 1.0;
         let fully_on = self.enable.is_settled() && self.enable.current() == 1.0;

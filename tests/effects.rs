@@ -47,6 +47,10 @@ fn every_effect_and_preset_is_finite_bounded_and_block_size_invariant() {
             let reference = run(kind, &fx, &x, 480);
             assert!(reference.iter().all(|s| s.is_finite()), "{kind:?}/{name}: non-finite output");
             assert!(analysis::peak(&reference) < 4.0, "{kind:?}/{name}: peak {}", analysis::peak(&reference));
+            // Noise suppression changes framing mode with block size (checked separately below).
+            if kind == EffectKind::Denoise {
+                continue;
+            }
             for block in [1, 333, 4096] {
                 let y = run(kind, &fx, &x, block);
                 assert!(analysis::max_abs_diff(&reference, &y) < 1e-6, "{kind:?}/{name}: block {block} differs");
@@ -72,7 +76,8 @@ fn latency_is_reported_per_enabled_effect() {
         let params = FxParams::from_settings(&on(kind, &[]));
         let chain = Chain::build(&[kind], &params, RATE as f32, 480);
         let want = match kind {
-            EffectKind::Denoise => 960,
+            // Direct mode: whole 10 ms frames, so only RNNoise's own frame of delay.
+            EffectKind::Denoise => 480,
             EffectKind::Pitch | EffectKind::Robot => 3,
             _ => 0,
         };
@@ -195,6 +200,39 @@ fn denoise_removes_noise_and_keeps_voice() {
     let y = run(EffectKind::Denoise, &on(EffectKind::Denoise, &[]), &v, 480);
     let loss = level_db(&v[24_000..60_000]) - level_db(&y[24_000..60_000]);
     assert!(loss < 6.0, "vowel lost {loss:.1} dB");
+}
+
+#[test]
+fn denoise_direct_mode_is_buffered_mode_one_frame_earlier() {
+    let mut x = signals::vowel(RATE, 0.6, 140.0);
+    x.iter_mut().zip(signals::brown_noise(RATE, 0.6, 0.1, 4)).for_each(|(a, b)| *a += b);
+    let fx = on(EffectKind::Denoise, &[]);
+    let direct = run(EffectKind::Denoise, &fx, &x, 480);
+    for block in [1, 333, 4096] {
+        let buffered = run(EffectKind::Denoise, &fx, &x, block);
+        assert_eq!(&buffered[480..], &direct[..direct.len() - 480], "block {block}");
+    }
+}
+
+#[test]
+fn denoise_falls_back_to_buffered_mode_once_and_keeps_mix_aligned() {
+    let mut fx = on(EffectKind::Denoise, &[]);
+    fx.set_mix(EffectKind::Denoise, 0.0); // dry only: output must be the input, delayed exactly
+    let params = FxParams::from_settings(&fx);
+    let mut chain = Chain::build(&[EffectKind::Denoise], &params, RATE as f32, 4096);
+    let x = signals::vowel(RATE, 1.0, 150.0);
+    let mut y = x.clone();
+    let (head, tail) = y.split_at_mut(4800);
+    head.chunks_mut(480).for_each(|c| chain.process(c));
+    assert_eq!(chain.latency(), 480);
+    let switch = 4800;
+    tail.chunks_mut(333).for_each(|c| chain.process(c));
+    assert_eq!(chain.latency(), 960);
+    let status = params.get(EffectKind::Denoise).status.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(status, voice_changer::dsp::fx::denoise::STATUS_BUFFERED);
+    // Before the switch: input delayed 480; well after it: delayed 960. Dry path follows.
+    assert_eq!(&y[480..switch], &x[..switch - 480]);
+    assert_eq!(&y[switch + 2000..], &x[switch + 2000 - 960..x.len() - 960]);
 }
 
 #[test]

@@ -48,10 +48,11 @@ mod tests {
         let x = signals::vowel(48_000, 0.5, 140.0);
         let params = CoreParams { input_gain: 0.7, output_gain: 1.2, ..Default::default() };
         // Every effect at once, so block-boundary bugs anywhere in the chain show up here.
+        // (Noise suppression picks a framing mode from the block size; tested separately.)
         let mut fx =
             FxSettings::default().with(crate::dsp::EffectKind::Pitch, &[("semitones", -3.0), ("formant", 2.0)]);
         for kind in crate::dsp::EffectKind::ALL {
-            fx.set_enabled(kind, true);
+            fx.set_enabled(kind, kind != crate::dsp::EffectKind::Denoise);
         }
         let reference = render(&x, 48_000, params, &fx, DEFAULT_BLOCK);
         for block in [1, 64, 333, 4096] {

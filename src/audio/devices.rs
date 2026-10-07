@@ -3,10 +3,22 @@
 use crate::config::DeviceRef;
 use cpal::traits::{DeviceTrait, HostTrait};
 
+/// Where an output's sound goes, as far as Windows knows. Many HDMI/monitor drivers don't say.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Listening {
+    /// Speakers or TV/monitor audio: a live mic can pick it up and howl.
+    OutLoud,
+    /// Headphones, headset, earpiece.
+    Ears,
+    #[default]
+    Unknown,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceInfo {
     pub id: String,
     pub name: String,
+    pub listening: Listening,
 }
 
 impl DeviceInfo {
@@ -21,6 +33,7 @@ pub struct DeviceList {
     pub outputs: Vec<DeviceInfo>,
     pub default_input: Option<String>,
     pub default_output: Option<String>,
+    pub default_output_listening: Listening,
 }
 
 impl DeviceList {
@@ -31,7 +44,18 @@ impl DeviceList {
 }
 
 fn info(d: &cpal::Device) -> Option<DeviceInfo> {
-    Some(DeviceInfo { id: d.id().ok()?.to_string(), name: d.description().ok()?.name().to_string() })
+    let desc = d.description().ok()?;
+    Some(DeviceInfo { id: d.id().ok()?.to_string(), name: desc.name().to_string(), listening: listening(&desc) })
+}
+
+fn listening(desc: &cpal::DeviceDescription) -> Listening {
+    use cpal::{DeviceType, InterfaceType};
+    match desc.device_type() {
+        DeviceType::Speaker => Listening::OutLoud,
+        DeviceType::Headphones | DeviceType::Headset | DeviceType::Earpiece | DeviceType::HearingAid => Listening::Ears,
+        _ if matches!(desc.interface_type(), InterfaceType::Hdmi | InterfaceType::DisplayPort) => Listening::OutLoud,
+        _ => Listening::Unknown,
+    }
 }
 
 pub fn enumerate(host: &cpal::Host) -> DeviceList {
@@ -44,6 +68,10 @@ pub fn enumerate(host: &cpal::Host) -> DeviceList {
         inputs: collect(host.input_devices().ok().map(|i| Box::new(i) as Box<dyn Iterator<Item = _>>)),
         outputs: collect(host.output_devices().ok().map(|i| Box::new(i) as Box<dyn Iterator<Item = _>>)),
         default_input: host.default_input_device().and_then(|d| info(&d)).map(|d| d.name),
+        default_output_listening: host
+            .default_output_device()
+            .and_then(|d| info(&d))
+            .map_or(Listening::Unknown, |d| d.listening),
         default_output: host.default_output_device().and_then(|d| info(&d)).map(|d| d.name),
     }
 }

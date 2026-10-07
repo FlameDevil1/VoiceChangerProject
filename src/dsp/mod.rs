@@ -37,6 +37,10 @@ pub trait Processor: Send {
     fn latency(&self) -> usize {
         0
     }
+    /// Largest latency this effect can ever report (sizes the slot's dry-path delay line).
+    fn max_latency(&self) -> usize {
+        self.latency()
+    }
     /// Clear internal state (delay lines, envelopes) without reallocating.
     fn reset(&mut self) {}
 }
