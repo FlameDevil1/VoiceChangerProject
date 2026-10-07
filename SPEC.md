@@ -15,7 +15,7 @@ rendering (and therefore DSP testing) comes early.
 | Noise suppression | `nnnoiseless` (pure-Rust RNNoise, BSD) | 10 ms frames, 48 kHz native, CPU-only. 40+ dB on fan/rumble noise; weak on flat white hiss (use the gate for that). |
 | Internal sample rate | The mic's native rate (48 kHz on almost every Windows device) | WASAPI shared-mode capture only accepts the native format; outputs are opened at the same rate and Windows converts if needed. |
 | Target latency | **≤ 40 ms app-side** in Balanced mode, measured and shown in the UI | See latency budget below. |
-| Target hardware | Ryzen 7 7800X3D + RTX 4070 Super (dev laptop: Ryzen 7 7735HS) | Builds target `x86-64-v3` (AVX2+FMA) so DSP loops vectorise. The GPU makes AI voice conversion realistic as a stretch goal. |
+| Target hardware | Ryzen 7 7800X3D + RTX 4070 Super (dev laptop: Ryzen 7 7735HS) | Builds run on any x86-64 CPU; the hot loop switches to AVX2 at runtime when available, with bit-identical output. The GPU makes AI voice conversion realistic as a stretch goal. |
 | AI voice conversion in v1 | **No** | Needs a GPU and adds 100–300 ms. Architecture leaves room for it later. |
 | v1 must-haves | I/O + VB-CABLE, pitch/formant, gate + noise suppression, EQ, compressor/limiter, reverb, robot, radio, presets, hotkeys | |
 
@@ -211,9 +211,18 @@ As specified, plus:
 - Delay build-up/catch-up reuses the pitch engine's time-stretcher.
 - Buffers allocated only while enabled; full bypass when off; crossfaded switching (unchanged).
 
-## 4. Presets
+## 4. Presets: **done (step 5)**
 
-As specified. Preset JSON carries a `schemaVersion` so older presets keep loading after updates.
+- 14 built-ins: Normal, Deep voice, Monster, Female, Male, Child, Chipmunk, Robot, Alien,
+  Telephone, Walkie-talkie, Cave, Announcer, Podcast. Bad-connection scenarios join in step 9.
+- User presets: one JSON file each in `%APPDATA%\VoiceChanger\presets` (`schema_version`,
+  unknown fields ignored, missing ones defaulted). Save, Save as, rename, delete (with
+  confirmation), import (several files at once; name clashes get " (2)"), export.
+- **Mic cleanup is kept separate from voice character**: loading a preset leaves noise
+  suppression and the gate as they are, unless it was saved with "include mic cleanup".
+- The loaded preset is remembered; "*" marks it as modified (parameters, on/off or order).
+- Effect order is adjustable (arrows per effect, "Reset order"); reordering swaps the chain live
+  with a crossfade.
 
 ## 5. Hotkeys and quick controls
 
@@ -222,9 +231,12 @@ keyboard hook (`WH_KEYBOARD_LL`); toggles can use `RegisterHotKey`.
 
 ## 6. User interface
 
-Done in step 1: single window, dark/light/system theme, simple device and level panels.
-Later: simple vs advanced mode, spectrum visualizer (FFT on the UI side from a ring copy, capped
-at the meter frame rate), Test button, tray icon, start minimized, launch on startup.
+Done: single window, dark/light/system theme, device and level panels (step 1).
+**Simple / Advanced modes (step 5)**: Simple shows devices, levels, a preset button grid, bypass,
+mute, quick noise-suppression/gate toggles and volume; Advanced adds input gain, mic channel,
+preset management, every effect panel with ordering, and latency/performance details.
+Later: Test button, spectrum visualizer (FFT on the UI side from a ring copy, capped at the meter
+frame rate), tray icon, start minimized, launch on startup.
 
 ## 7. File processing (offline)
 
@@ -259,8 +271,20 @@ future Test button and the DSP test harness.
 
 ## 10. Packaging
 
-As specified. Release profile: thin LTO, stripped, ~8 MB `.exe`, no console window. Installer
+As specified. Release profile: thin LTO, stripped, ~9 MB `.exe`, no console window. Installer
 should check for VB-CABLE and link to it, not bundle it.
+
+- **CPU compatibility (done):** builds target baseline x86-64 so they run on any 64-bit PC; the
+  pitch tracker's hot loop picks an AVX2 version at runtime (`src/dsp/simd.rs`). Output is
+  bit-identical either way (verified by running the golden tests on both paths, also in CI).
+  Cost of portability vs an AVX2-only build: ~0.3 % of one core with every effect on.
+- **SmartScreen:** unsigned downloads show "Windows protected your PC". Options, cheapest first:
+  publish through the Microsoft Store (Store-signed, no warning); Microsoft's Azure-based
+  signing service (low monthly fee, identity validation, availability depends on country);
+  a traditional code-signing certificate (yearly, hardware key required). Signing alone no
+  longer guarantees no warning: SmartScreen also builds reputation per publisher over downloads.
+- **CI:** `.github/workflows/ci.yml` (clippy with warnings as errors, tests on the AVX2 and
+  baseline paths, release artifacts) runs once the repo is pushed to GitHub.
 
 ## Build order
 
@@ -271,13 +295,17 @@ should check for VB-CABLE and link to it, not bundle it.
    pitch/formant shifter, Effects panel, `vcrender --pitch/--formant`.
 4. ✅ Core effects: noise suppression, gate, EQ, compressor, reverb, robot, radio; spec-driven
    effect panels; zero-allocation audio path enforced by a test.
-5. Modulation sliders (3A).
-6. Bad mic / bad connection (3B), monitor tap point.
-7. Presets (save/load/import/export, scenario presets).
-8. Global hotkeys, tray icon, toasts.
-9. UI polish: visualizer, simple/advanced mode, Test button.
+5. ✅ Presets (built-in + user, import/export), Simple/Advanced modes, effect reordering,
+   runtime CPU dispatch, GUI split into modules, CI workflow.
+6. Global hotkeys, tray icon, toasts.
+7. Test button (record 5 s, play back processed), visualizer, other UI polish.
+8. Modulation sliders (3A).
+9. Bad mic / bad connection (3B), scenario presets, monitor tap point.
 10. File processing UI (batch, MP3 export, record-with-effects).
-11. Installer, startup options, stretch features.
+11. Installer, signing, startup options, stretch features.
+
+Steps 6–7 were moved ahead of 3A/3B: they make the app usable day to day, and the Test button
+is the quickest way to judge effect quality by ear.
 
 ## Stretch / future
 

@@ -243,6 +243,7 @@ impl Controller {
                 }
             }
             Command::SetChainOrder(order) => {
+                log::info!("effect order: {order:?}");
                 self.settings.chain_order = order;
                 if let Some(running) = &mut self.running {
                     let chain = Chain::build(&self.settings.chain_order, &self.shared.fx, running.engine_rate as f32, MAX_BLOCK);

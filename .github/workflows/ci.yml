@@ -1,0 +1,39 @@
+# Runs on every push and pull request once the repo is on GitHub.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --release --all-targets -- -D warnings
+
+      - name: Tests (AVX2 path where the runner supports it)
+        run: cargo test --release
+
+      - name: Tests on the baseline (non-AVX2) path
+        run: cargo test --release
+        env:
+          VC_FORCE_BASELINE: "1"
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voicechanger-windows-x64
+          path: |
+            target/release/voicechanger.exe
+            target/release/vcrender.exe

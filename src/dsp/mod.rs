@@ -9,6 +9,7 @@ pub mod limiter;
 pub mod params;
 pub mod pitch;
 pub mod shared_params;
+pub mod simd;
 pub mod util;
 
 pub use chain::{Chain, EffectKind, FxParams, FxSettings};

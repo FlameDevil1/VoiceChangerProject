@@ -2,18 +2,24 @@
 //! - redraws only on input, status changes, or at 30 fps while audio is running and visible;
 //! - all device work happens on the engine's controller thread, never here;
 //! - meters read lock-free atomics.
+//!
+//! Two layouts: **Simple** (devices, levels, preset buttons, the common toggles) and
+//! **Advanced** (every control, effect order, preset management).
 
-use eframe::egui::{self, Color32, RichText};
+mod effects;
+mod presets;
+mod widgets;
+
+use eframe::egui::{self, RichText};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use voice_changer::audio::engine::OutputInfo;
 use voice_changer::audio::{devices, Command, EngineHandle, EngineSettings, EngineState, Shared, Status};
-use voice_changer::config::{Config, DeviceRef, LatencyMode, ThemePref};
-use voice_changer::dsp::fx::denoise::STATUS_UNSUPPORTED_RATE;
-use voice_changer::dsp::params::EffectParams;
-use voice_changer::dsp::{EffectKind, FxSettings};
-use voice_changer::dsp::{db_to_gain, gain_to_db};
+use voice_changer::config::{Config, LatencyMode, ThemePref, UiMode};
+use voice_changer::dsp::{db_to_gain, simd, EffectKind, FxSettings};
+use voice_changer::presets::PresetStore;
+use widgets::{apply_theme, channel_label, device_combo, gain_row, section, status_dot, Meter, AMBER, GREEN, RED};
 
 /// Meter redraw rates (focused, background). Measured ~0.45 % of one core per fps on a laptop
 /// iGPU, so the background rate matters most: the app usually sits behind a game or Discord.
@@ -33,6 +39,8 @@ pub struct App {
     was_focused: bool,
     auto_start_pending: bool,
     last_meter_update: Instant,
+    presets: PresetStore,
+    preset_ui: presets::PresetUi,
 }
 
 impl App {
@@ -48,6 +56,7 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         let engine = EngineHandle::spawn(shared, Box::new(move || ctx.request_repaint()));
         apply_theme(&cc.egui_ctx, cfg.theme);
+        log::info!("DSP SIMD level: {}", simd::level().label());
 
         let auto_start_pending = cfg.was_running;
         Self {
@@ -61,6 +70,8 @@ impl App {
             was_focused: true,
             auto_start_pending,
             last_meter_update: Instant::now(),
+            presets: PresetStore::load(&PresetStore::default_dir()),
+            preset_ui: Default::default(),
         }
     }
 
@@ -84,6 +95,17 @@ impl App {
 
     fn mark_dirty(&mut self) {
         self.dirty_since.get_or_insert_with(Instant::now);
+    }
+
+    /// Replace all effect settings (preset load, reorder, edits): publish to the audio thread,
+    /// rebuild the chain if the order changed (crossfaded, no restart), and save later.
+    fn set_fx(&mut self, fx: FxSettings) {
+        if fx.order != self.cfg.fx.order {
+            self.engine.send(Command::SetChainOrder(fx.order.clone()));
+        }
+        self.shared().fx.store(&fx);
+        self.cfg.fx = fx;
+        self.mark_dirty();
     }
 
     fn start(&mut self) {
@@ -176,18 +198,27 @@ impl App {
                     apply_theme(ui.ctx(), next);
                     self.mark_dirty();
                 }
-                let (color, text) = match &self.status.state {
-                    EngineState::Running => (Color32::from_rgb(60, 180, 90), "Running"),
-                    EngineState::Reconnecting => (Color32::from_rgb(230, 160, 40), "Reconnecting…"),
-                    EngineState::Error(_) => (Color32::from_rgb(220, 70, 60), "Error"),
-                    EngineState::Stopped => (ui.visuals().weak_text_color(), "Stopped"),
-                };
-                ui.label(RichText::new(text).color(color));
-                status_dot(ui, color);
+                let mut mode = self.cfg.ui_mode;
+                ui.selectable_value(&mut mode, UiMode::Advanced, "Advanced").on_hover_text("Every control");
+                ui.selectable_value(&mut mode, UiMode::Simple, "Simple").on_hover_text("Presets and essentials");
+                if mode != self.cfg.ui_mode {
+                    self.cfg.ui_mode = mode;
+                    self.mark_dirty();
+                }
             });
         });
 
         let active = self.is_active();
+        ui.horizontal(|ui| {
+            let (color, text) = match &self.status.state {
+                EngineState::Running => (GREEN, "Running"),
+                EngineState::Reconnecting => (AMBER, "Reconnecting…"),
+                EngineState::Error(_) => (RED, "Error"),
+                EngineState::Stopped => (ui.visuals().weak_text_color(), "Stopped"),
+            };
+            status_dot(ui, color);
+            ui.label(RichText::new(text).color(color));
+        });
         let label = if active { "■  Stop" } else { "▶  Start" };
         let button = egui::Button::new(RichText::new(label).size(18.0)).min_size(egui::vec2(ui.available_width(), 36.0));
         if ui.add(button).clicked() {
@@ -200,51 +231,49 @@ impl App {
             self.mark_dirty();
         }
         if let EngineState::Error(e) = &self.status.state {
-            ui.colored_label(Color32::from_rgb(220, 70, 60), e);
+            ui.colored_label(RED, e);
         }
         if let Some(w) = &self.status.warning {
-            ui.colored_label(Color32::from_rgb(230, 160, 40), format!("⚠ {w}"));
+            ui.colored_label(AMBER, format!("⚠ {w}"));
         }
     }
 
-    fn devices_section(&mut self, ui: &mut egui::Ui) {
+    fn devices_section(&mut self, ui: &mut egui::Ui, advanced: bool) {
         let list = self.status.devices.clone();
         section(ui, "Devices", |ui| {
             egui::Grid::new("devices").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                // Microphone
                 ui.label("Microphone");
                 let default_name = list.default_input.clone().unwrap_or_default();
                 let inputs: Vec<(String, bool)> =
                     list.inputs.iter().map(|d| (d.name.clone(), devices::is_cable_capture(&d.name))).collect();
-                let changed = device_combo(ui, "mic", &mut self.cfg.input, &list.inputs, &inputs, Some(&default_name));
-                if changed {
+                if device_combo(ui, "mic", &mut self.cfg.input, &list.inputs, &inputs, Some(&default_name)) {
                     self.mark_dirty();
                     self.restart_if_active();
                 }
                 ui.end_row();
 
-                ui.label("Mic channel");
-                let mut ch = self.cfg.input_channel;
-                egui::ComboBox::from_id_salt("chan")
-                    .selected_text(channel_label(ch))
-                    .show_ui(ui, |ui| {
-                        for opt in [None, Some(0), Some(1)] {
-                            ui.selectable_value(&mut ch, opt, channel_label(opt));
-                        }
-                    })
-                    .response
-                    .on_hover_text("Use \"Left only\" if your interface puts the mic on one channel.");
-                if ch != self.cfg.input_channel {
-                    self.cfg.input_channel = ch;
-                    self.shared().input_channel.store(ch.map_or(-1, |c| c as i32), Relaxed);
-                    self.mark_dirty();
+                if advanced {
+                    ui.label("Mic channel");
+                    let mut ch = self.cfg.input_channel;
+                    egui::ComboBox::from_id_salt("chan")
+                        .selected_text(channel_label(ch))
+                        .show_ui(ui, |ui| {
+                            for opt in [None, Some(0), Some(1)] {
+                                ui.selectable_value(&mut ch, opt, channel_label(opt));
+                            }
+                        })
+                        .response
+                        .on_hover_text("Use \"Left only\" if your interface puts the mic on one channel.");
+                    if ch != self.cfg.input_channel {
+                        self.cfg.input_channel = ch;
+                        self.shared().input_channel.store(ch.map_or(-1, |c| c as i32), Relaxed);
+                        self.mark_dirty();
+                    }
+                    ui.end_row();
                 }
-                ui.end_row();
 
-                // Virtual mic
                 ui.label("Virtual mic");
-                let outputs: Vec<(String, bool)> =
-                    list.outputs.iter().map(|d| (d.name.clone(), false)).collect();
+                let outputs: Vec<(String, bool)> = list.outputs.iter().map(|d| (d.name.clone(), false)).collect();
                 if device_combo(ui, "cable", &mut self.cfg.cable, &list.outputs, &outputs, None) {
                     self.cfg.cable_choice_made = true;
                     self.engine.send(Command::SetCable(self.cfg.cable.clone()));
@@ -252,13 +281,10 @@ impl App {
                 }
                 ui.end_row();
 
-                // Monitoring
                 let mut enabled = self.cfg.monitor_enabled;
-                ui.checkbox(&mut enabled, "Hear myself")
-                    .on_hover_text("Play the processed voice to your headphones.");
+                ui.checkbox(&mut enabled, "Hear myself").on_hover_text("Play the processed voice to your headphones.");
                 let default_out = list.default_output.clone().unwrap_or_default();
-                let dev_changed =
-                    device_combo(ui, "monitor", &mut self.cfg.monitor, &list.outputs, &outputs, Some(&default_out));
+                let dev_changed = device_combo(ui, "monitor", &mut self.cfg.monitor, &list.outputs, &outputs, Some(&default_out));
                 if enabled != self.cfg.monitor_enabled || dev_changed {
                     self.cfg.monitor_enabled = enabled;
                     self.send_monitor();
@@ -278,20 +304,22 @@ impl App {
         match (&self.cfg.cable, &self.status.cable) {
             (Some(_), Some(OutputInfo { name, lost: false, .. })) if self.is_active() => {
                 ui.horizontal_wrapped(|ui| {
-                    status_dot(ui, Color32::from_rgb(60, 180, 90));
+                    status_dot(ui, GREEN);
                     ui.label(format!("Feeding {name}"));
                 });
                 if devices::is_cable_playback(name) {
                     let capture = name.replacen("Input", "Output", 1);
                     ui.label(
-                        RichText::new(format!("In Discord, games or OBS, choose \"{capture}\" as the microphone."))
-                            .small()
-                            .weak(),
+                        RichText::new(format!(
+                            "In Discord, games or OBS, choose \"{capture}\" as the microphone, and turn off their own noise suppression for it."
+                        ))
+                        .small()
+                        .weak(),
                     );
                 }
             }
             (Some(d), Some(OutputInfo { lost: true, .. })) => {
-                ui.colored_label(Color32::from_rgb(230, 160, 40), format!("⚠ {} is unavailable; retrying…", d.name));
+                ui.colored_label(AMBER, format!("⚠ {} is unavailable; retrying…", d.name));
             }
             (Some(d), _) => {
                 ui.label(RichText::new(format!("Will feed {} when started.", d.name)).weak());
@@ -338,9 +366,10 @@ impl App {
         });
     }
 
-    fn controls_section(&mut self, ui: &mut egui::Ui) {
+    /// Bypass / mute buttons, plus (Simple mode) quick toggles for the mic cleanup effects.
+    fn controls_section(&mut self, ui: &mut egui::Ui, advanced: bool) {
         section(ui, "Controls", |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let sh = &self.engine.shared;
                 let bypass = sh.bypass.load(Relaxed);
                 if ui.add(egui::Button::new("Bypass effects").selected(bypass)).on_hover_text("Send your original voice").clicked() {
@@ -351,13 +380,27 @@ impl App {
                     sh.mute.store(!mute, Relaxed);
                 }
             });
+            if !advanced {
+                let mut fx = self.cfg.fx.clone();
+                ui.horizontal_wrapped(|ui| {
+                    for kind in [EffectKind::Denoise, EffectKind::Gate] {
+                        let mut on = fx.enabled(kind);
+                        if ui.checkbox(&mut on, kind.label()).on_hover_text(kind.spec().help).changed() {
+                            fx.set_enabled(kind, on);
+                        }
+                    }
+                });
+                if fx != self.cfg.fx {
+                    self.set_fx(fx);
+                }
+            }
             ui.add_space(4.0);
             egui::Grid::new("gains").num_columns(3).spacing([8.0, 6.0]).show(ui, |ui| {
-                if gain_row(ui, "Input gain", &mut self.cfg.input_gain_db) {
+                if advanced && gain_row(ui, "Input gain", &mut self.cfg.input_gain_db) {
                     self.engine.shared.input_gain.store(db_to_gain(self.cfg.input_gain_db));
                     self.mark_dirty();
                 }
-                if gain_row(ui, "Output gain", &mut self.cfg.output_gain_db) {
+                if gain_row(ui, if advanced { "Output gain" } else { "Volume" }, &mut self.cfg.output_gain_db) {
                     self.engine.shared.output_gain.store(db_to_gain(self.cfg.output_gain_db));
                     self.mark_dirty();
                 }
@@ -366,18 +409,26 @@ impl App {
     }
 
     fn effects_section(&mut self, ui: &mut egui::Ui) {
-        let before = self.cfg.fx.clone();
+        let mut fx = self.cfg.fx.clone();
         let shared = self.engine.shared.clone();
         let active = self.is_active();
         section(ui, "Effects", |ui| {
-            ui.label(RichText::new("Effects that are off add no delay and use no CPU.").small().weak());
-            for kind in self.cfg.fx.order.clone() {
-                effect_panel(ui, kind, &mut self.cfg.fx, shared.fx.get(kind), active);
+            ui.label(RichText::new("Effects that are off add no delay and use no CPU. The arrows change the processing order.").small().weak());
+            let order = fx.order.clone();
+            let n = order.len();
+            for (i, kind) in order.into_iter().enumerate() {
+                let reorder = Some((i > 0, i + 1 < n));
+                if let Some(m) = effects::effect_panel(ui, kind, &mut fx, shared.fx.get(kind), active, reorder) {
+                    let j = if m == effects::Move::Up { i - 1 } else { i + 1 };
+                    fx.order.swap(i, j);
+                }
+            }
+            if ui.small_button("Reset order").on_hover_text("Back to the recommended processing order").clicked() {
+                fx.order = EffectKind::ALL.to_vec();
             }
         });
-        if self.cfg.fx != before {
-            shared.fx.store(&self.cfg.fx);
-            self.mark_dirty();
+        if fx != self.cfg.fx {
+            self.set_fx(fx);
         }
     }
 
@@ -413,13 +464,11 @@ impl App {
             let rate = self.status.sample_rate.max(1) as f32;
             let in_ms = sh.in_block.load(Relaxed) as f32 / rate * 1000.0;
             let dsp_ms = sh.dsp_latency.load(Relaxed) as f32 / rate * 1000.0;
-            let glitches = sh.cable.underruns.load(Relaxed)
-                + sh.monitor.underruns.load(Relaxed)
-                + sh.capture_xruns.load(Relaxed);
+            let glitches = sh.cable.underruns.load(Relaxed) + sh.monitor.underruns.load(Relaxed) + sh.capture_xruns.load(Relaxed);
             let path_ms = |info: &Option<OutputInfo>, fill: f32| {
-                info.as_ref().filter(|i| !i.lost && i.sample_rate > 0).map(|i| {
-                    in_ms + dsp_ms + fill + i.buffer_frames as f32 / i.sample_rate as f32 * 1000.0
-                })
+                info.as_ref()
+                    .filter(|i| !i.lost && i.sample_rate > 0)
+                    .map(|i| in_ms + dsp_ms + fill + i.buffer_frames as f32 / i.sample_rate as f32 * 1000.0)
             };
             let cable_ms = path_ms(&self.status.cable, sh.cable.fill_ms.load());
             let mon_ms = path_ms(&self.status.monitor, sh.monitor.fill_ms.load());
@@ -443,11 +492,15 @@ impl App {
             });
 
             egui::CollapsingHeader::new("Details").show(ui, |ui| {
-                ui.label(format!("Engine: {} @ {} Hz, {:.1} ms blocks", self.status.input_name, self.status.sample_rate, in_ms));
-                for (label, info, st) in [
-                    ("Virtual mic", &self.status.cable, &sh.cable),
-                    ("Headphones", &self.status.monitor, &sh.monitor),
-                ] {
+                ui.label(format!(
+                    "Engine: {} @ {} Hz, {:.1} ms blocks · effects add {:.1} ms · DSP uses {}",
+                    self.status.input_name,
+                    self.status.sample_rate,
+                    in_ms,
+                    dsp_ms,
+                    simd::level().label()
+                ));
+                for (label, info, st) in [("Virtual mic", &self.status.cable, &sh.cable), ("Headphones", &self.status.monitor, &sh.monitor)] {
                     if let Some(i) = info.as_ref().filter(|i| !i.lost) {
                         ui.label(format!(
                             "{label}: {} @ {} Hz · buffer {:.1} ms (target {:.1}) · margin {:.0} ms · drift {:+.0} ppm",
@@ -469,17 +522,24 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.tick(&ctx);
+        let advanced = self.cfg.ui_mode == UiMode::Advanced;
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 self.header(ui);
                 ui.add_space(6.0);
-                self.devices_section(ui);
+                self.devices_section(ui, advanced);
                 self.levels_section(ui);
-                self.controls_section(ui);
-                self.effects_section(ui);
-                self.performance_section(ui);
+                if advanced {
+                    self.controls_section(ui, true);
+                    self.preset_manager(ui);
+                    self.effects_section(ui);
+                    self.performance_section(ui);
+                } else {
+                    self.preset_grid(ui);
+                    self.controls_section(ui, false);
+                }
                 ui.add_space(4.0);
-                ui.label(RichText::new(format!("v{} · Step 4: core effects", env!("CARGO_PKG_VERSION"))).small().weak());
+                ui.label(RichText::new(format!("v{}", env!("CARGO_PKG_VERSION"))).small().weak());
             });
         });
     }
@@ -487,253 +547,4 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.cfg.save();
     }
-}
-
-// ---- widgets ---------------------------------------------------------------------------------
-
-fn apply_theme(ctx: &egui::Context, theme: ThemePref) {
-    ctx.set_theme(match theme {
-        ThemePref::System => egui::ThemePreference::System,
-        ThemePref::Dark => egui::ThemePreference::Dark,
-        ThemePref::Light => egui::ThemePreference::Light,
-    });
-}
-
-fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(4.0);
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.label(RichText::new(title).strong());
-        ui.add_space(2.0);
-        add(ui);
-    });
-}
-
-fn channel_label(ch: Option<usize>) -> &'static str {
-    match ch {
-        None => "Mix all channels",
-        Some(0) => "Left / channel 1 only",
-        Some(1) => "Right / channel 2 only",
-        Some(_) => "Other",
-    }
-}
-
-/// Device dropdown. `default_label = Some(..)` adds a "Windows default" entry (stored as `None`);
-/// otherwise the `None` entry means "Off". Remembered devices that are unplugged stay visible.
-/// `labels[i] = (name, warn)` marks risky choices. Returns true if the selection changed.
-fn device_combo(
-    ui: &mut egui::Ui,
-    id: &str,
-    selected: &mut Option<DeviceRef>,
-    list: &[devices::DeviceInfo],
-    labels: &[(String, bool)],
-    default_label: Option<&str>,
-) -> bool {
-    let none_text = match default_label {
-        Some(n) if !n.is_empty() => format!("Windows default ({n})"),
-        Some(_) => "Windows default".to_string(),
-        None => "Off".to_string(),
-    };
-    let current = match selected {
-        None => none_text.clone(),
-        Some(d) if list.iter().any(|x| x.id == d.id || x.name == d.name) => d.name.clone(),
-        Some(d) => format!("{} (disconnected)", d.name),
-    };
-    let mut changed = false;
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(current)
-        .width(ui.available_width().min(300.0))
-        .truncate()
-        .show_ui(ui, |ui| {
-            if ui.selectable_label(selected.is_none(), &none_text).clicked() && selected.is_some() {
-                *selected = None;
-                changed = true;
-            }
-            for (d, (name, warn)) in list.iter().zip(labels) {
-                let is_sel = selected.as_ref().is_some_and(|s| s.id == d.id);
-                let text = if *warn { format!("⚠ {name}") } else { name.clone() };
-                let r = ui.selectable_label(is_sel, text);
-                let r = if *warn { r.on_hover_text("This is a virtual cable output; using it here causes feedback.") } else { r };
-                if r.clicked() && !is_sel {
-                    *selected = Some(d.to_ref());
-                    changed = true;
-                }
-            }
-        });
-    changed
-}
-
-/// One effect: header with on/off and a live readout, then presets, sliders and mix.
-fn effect_panel(ui: &mut egui::Ui, kind: EffectKind, fx: &mut FxSettings, live: &EffectParams, active: bool) {
-    let spec = kind.spec();
-    let id = ui.make_persistent_id(("effect", kind.key()));
-    let mut enabled = fx.enabled(kind);
-    let unsupported = live.status.load(Relaxed) == STATUS_UNSUPPORTED_RATE;
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
-        .show_header(ui, |ui| {
-            if ui.checkbox(&mut enabled, RichText::new(spec.label).strong()).on_hover_text(spec.help).changed() {
-                fx.set_enabled(kind, enabled);
-            }
-            if enabled && active {
-                let m = live.meter.load();
-                let readout = match kind {
-                    EffectKind::Gate => Some(if m > 0.5 { "open".to_string() } else { "closed".to_string() }),
-                    EffectKind::Compressor => Some(format!("GR {:.1} dB", m.abs())),
-                    EffectKind::Denoise if !unsupported => Some(format!("voice {:.0}%", m * 100.0)),
-                    _ => None,
-                };
-                if let Some(r) = readout {
-                    ui.label(RichText::new(r).small().monospace().weak());
-                }
-            }
-            if enabled && unsupported {
-                ui.label(RichText::new("⚠ needs 48 kHz").small().color(Color32::from_rgb(230, 160, 40)));
-            }
-        })
-        .body(|ui| {
-            ui.label(RichText::new(spec.help).small().weak());
-            if unsupported {
-                ui.colored_label(
-                    Color32::from_rgb(230, 160, 40),
-                    "Your microphone runs at a rate other than 48 kHz. Set it to 48 kHz in Windows Sound settings → Recording → Properties → Advanced.",
-                );
-            }
-            if !spec.presets.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    for (name, values) in spec.presets {
-                        if ui.small_button(*name).clicked() {
-                            for (k, v) in *values {
-                                fx.set(kind, k, *v);
-                            }
-                            fx.set_enabled(kind, true);
-                        }
-                    }
-                });
-            }
-            let mut moved = false;
-            egui::Grid::new(("fx-grid", kind.key())).num_columns(3).spacing([8.0, 6.0]).show(ui, |ui| {
-                for p in spec.params {
-                    let mut v = fx.get(kind, p.key);
-                    let r = slider_row(ui, p.label, &mut v, p.min..=p.max, p.unit, p.step as f64, p.default).on_hover_text(p.help);
-                    if r.changed() {
-                        fx.set(kind, p.key, v);
-                        moved = true;
-                    }
-                }
-                let mut pct = fx.mix(kind) * 100.0;
-                if slider_row(ui, spec.mix_label, &mut pct, 0.0..=100.0, " %", 1.0, spec.default_mix * 100.0).changed() {
-                    fx.set_mix(kind, pct / 100.0);
-                    moved = true;
-                }
-            });
-            // Moving a control while the effect is off is a clear sign you want it on.
-            if moved && !fx.enabled(kind) {
-                fx.set_enabled(kind, true);
-            }
-        });
-}
-
-/// Labelled slider with typed input (click the number) and a reset-to-default button.
-/// Returns the slider's response with `changed()` also covering the reset.
-fn slider_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
-    suffix: &str,
-    step: f64,
-    default: f32,
-) -> egui::Response {
-    ui.label(label);
-    let mut r = ui.add(egui::Slider::new(value, range).suffix(suffix).step_by(step).max_decimals(1));
-    if ui.add_enabled(*value != default, egui::Button::new("⟲")).on_hover_text("Reset").clicked() {
-        *value = default;
-        r.mark_changed();
-    }
-    ui.end_row();
-    r
-}
-
-/// Slider with typed input (click the number) and a reset button. Returns true on change.
-fn gain_row(ui: &mut egui::Ui, label: &str, db: &mut f32) -> bool {
-    ui.label(label);
-    let mut changed = ui
-        .add(egui::Slider::new(db, -24.0..=24.0).suffix(" dB").step_by(0.5).fixed_decimals(1))
-        .changed();
-    if ui.add_enabled(*db != 0.0, egui::Button::new("⟲")).on_hover_text("Reset to 0 dB").clicked() {
-        *db = 0.0;
-        changed = true;
-    }
-    ui.end_row();
-    changed
-}
-
-/// Peak meter with fall-back ballistics and a 1 s peak-hold tick.
-#[derive(Clone, Copy)]
-struct Meter {
-    db: f32,
-    hold_db: f32,
-    hold_left: f32,
-    clipped: f32,
-}
-
-impl Default for Meter {
-    fn default() -> Self {
-        Self { db: -90.0, hold_db: -90.0, hold_left: 0.0, clipped: 0.0 }
-    }
-}
-
-const METER_FLOOR: f32 = -60.0;
-
-impl Meter {
-    fn update(&mut self, peak: f32, dt: f32) {
-        let db = gain_to_db(peak);
-        self.db = db.max(self.db - 30.0 * dt);
-        if db >= self.hold_db || self.hold_left <= 0.0 {
-            self.hold_db = db.max(self.db);
-            self.hold_left = 1.0;
-        } else {
-            self.hold_left -= dt;
-        }
-        self.clipped = if peak >= 0.999 { 2.0 } else { (self.clipped - dt).max(0.0) };
-    }
-
-    fn show(&self, ui: &mut egui::Ui) {
-        let width = ui.available_width().min(300.0) - 64.0;
-        ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(width.max(60.0), 12.0), egui::Sense::hover());
-            let p = ui.painter();
-            let v = ui.visuals();
-            p.rect_filled(rect, 2.0, v.extreme_bg_color);
-            let frac = |db: f32| ((db - METER_FLOOR) / -METER_FLOOR).clamp(0.0, 1.0);
-            let level = frac(self.db);
-            if level > 0.0 {
-                let color = if self.db > -3.0 {
-                    Color32::from_rgb(220, 70, 60)
-                } else if self.db > -12.0 {
-                    Color32::from_rgb(230, 180, 40)
-                } else {
-                    Color32::from_rgb(60, 180, 90)
-                };
-                let mut r = rect;
-                r.set_width(rect.width() * level);
-                p.rect_filled(r, 2.0, color);
-            }
-            let hx = rect.left() + rect.width() * frac(self.hold_db);
-            if frac(self.hold_db) > 0.0 {
-                p.line_segment([egui::pos2(hx, rect.top()), egui::pos2(hx, rect.bottom())], (1.5, v.strong_text_color()));
-            }
-            let text = if self.db <= METER_FLOOR { "-∞ dB".to_string() } else { format!("{:.0} dB", self.db) };
-            ui.label(RichText::new(text).monospace());
-            if self.clipped > 0.0 {
-                ui.label(RichText::new("CLIP").small().color(Color32::from_rgb(220, 70, 60)));
-            }
-        });
-    }
-}
-
-/// Small filled circle (the default fonts have no "●" glyph).
-fn status_dot(ui: &mut egui::Ui, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.0, color);
 }

@@ -3,9 +3,9 @@
 Real-time voice changer for Windows 10/11 that feeds a virtual microphone (VB-CABLE), so
 Discord, games, OBS and Zoom hear the processed voice.
 
-**Status: steps 1–4 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
-output, GUI, offline renderer, limiter, and eight effects: noise suppression, noise gate,
-pitch & formant, robot, equalizer, compressor, reverb and radio/telephone.
+**Status: steps 1–5 of the [build order](SPEC.md#build-order).** Audio pipeline, virtual cable
+output, offline renderer, limiter, eight effects (noise suppression, noise gate, pitch & formant,
+robot, equalizer, compressor, reverb, radio/telephone), presets, and Simple/Advanced modes.
 
 ## Requirements
 
@@ -15,8 +15,9 @@ pitch & formant, robot, equalizer, compressor, reverb and radio/telephone.
 
 ## Build
 
-Needs Rust (MSVC toolchain) and the Visual Studio 2022 Build Tools (C++ workload). Builds target
-AVX2 CPUs (`.cargo/config.toml`); remove that file for a generic x86-64 build.
+Needs Rust (MSVC toolchain) and the Visual Studio 2022 Build Tools (C++ workload). Builds run on
+any 64-bit CPU and use AVX2 automatically where available (see `.cargo/config.toml` for a
+machine-tuned build).
 
 ```bash
 cargo build --release
@@ -31,6 +32,8 @@ The binary is `target/release/voicechanger.exe`.
 3. Press **Start**.
 4. In Discord/OBS/your game, select **CABLE Output** as the microphone.
 5. Optional: tick **Hear myself** to monitor through your headphones.
+6. Pick a voice in **Simple** mode, or switch to **Advanced** to tweak effects and save your
+   own presets (stored in `%APPDATA%\VoiceChanger\presets`, shareable via Export/Import).
 
 Settings and logs live in `%APPDATA%\VoiceChanger\`.
 
@@ -93,5 +96,7 @@ Layout:
 | `src/offline/` | File I/O, offline render, test signals, analysis (RMS, SNR, pitch) |
 | `src/bin/vcrender.rs` | Command-line file renderer |
 | `tests/golden.rs` | Golden-file regression harness |
-| `src/gui.rs` | egui window |
+| `src/gui/` | egui window: `mod.rs` (layout, sections), `effects.rs`, `presets.rs`, `widgets.rs` |
+| `src/presets.rs` | Built-in presets, user preset store (save/rename/delete/import/export) |
+| `src/dsp/simd.rs` | Runtime CPU feature dispatch (AVX2 when available) |
 | `SPEC.md` | Full spec, architecture and latency budget |

@@ -45,6 +45,7 @@ pub struct PitchTracker {
     filled: usize,
     lin: Vec<f32>,
     diff: Vec<f32>,
+    sq_diff: super::simd::SqDiff,
     win: usize,
     tau_min: usize,
     tau_max: usize,
@@ -77,6 +78,7 @@ impl PitchTracker {
             filled: 0,
             lin: vec![0.0; need],
             diff: vec![0.0; tau_max + 2],
+            sq_diff: super::simd::sq_diff_fn(),
             win,
             tau_min,
             tau_max,
@@ -151,7 +153,7 @@ impl PitchTracker {
             let mut running = 0.0f32;
             let mut found = None;
             for tau in 1..=self.tau_max {
-                let d = sq_diff(&x[..w], &x[tau..tau + w]);
+                let d = (self.sq_diff)(&x[..w], &x[tau..tau + w]);
                 running += d;
                 self.diff[tau] = if running > 0.0 { d * tau as f32 / running } else { 1.0 };
             }
@@ -213,25 +215,6 @@ impl PitchTracker {
             }
         }
     }
-}
-
-/// Sum of squared differences, written with 8 independent accumulators so LLVM vectorises it
-/// (a single float accumulator can't be reordered, which blocks SIMD).
-#[inline]
-fn sq_diff(a: &[f32], b: &[f32]) -> f32 {
-    let mut acc = [0.0f32; 8];
-    let ((ca, ra), (cb, rb)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
-    for (x, y) in ca.iter().zip(cb) {
-        for i in 0..8 {
-            let d = x[i] - y[i];
-            acc[i] += d * d;
-        }
-    }
-    let mut s: f32 = acc.iter().sum();
-    for (x, y) in ra.iter().zip(rb) {
-        s += (x - y) * (x - y);
-    }
-    s
 }
 
 // -------------------------------------------------------------------------------------------

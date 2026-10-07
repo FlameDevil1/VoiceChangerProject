@@ -128,6 +128,12 @@ impl FxSettings {
         self
     }
 
+    /// Builder: set an effect's wet/dry mix.
+    pub fn with_mix(mut self, kind: EffectKind, mix: f32) -> Self {
+        self.set_mix(kind, mix);
+        self
+    }
+
     pub fn enabled(&self, kind: EffectKind) -> bool {
         self.effects.get(&kind).is_some_and(|e| e.enabled)
     }

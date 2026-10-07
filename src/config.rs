@@ -43,6 +43,15 @@ impl LatencyMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiMode {
+    /// Presets, devices and the essentials.
+    #[default]
+    Simple,
+    /// Every control, effect order and preset management.
+    Advanced,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemePref {
     #[default]
     System,
@@ -73,8 +82,11 @@ pub struct Config {
     pub cable_choice_made: bool,
     /// Slower meter refresh to save CPU.
     pub low_power_ui: bool,
-    /// Effect settings (also the format presets will use).
+    /// Effect settings (also the format presets use).
     pub fx: FxSettings,
+    /// Last loaded preset (shown with "*" once modified).
+    pub preset: Option<String>,
+    pub ui_mode: UiMode,
 }
 
 impl Default for Config {
@@ -94,6 +106,8 @@ impl Default for Config {
             cable_choice_made: false,
             low_power_ui: false,
             fx: FxSettings::default(),
+            preset: Some("Normal".to_string()),
+            ui_mode: UiMode::Simple,
         }
     }
 }
