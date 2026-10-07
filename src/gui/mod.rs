@@ -6,6 +6,7 @@
 //! Two layouts: **Simple** (devices, levels, preset buttons, the common toggles) and
 //! **Advanced** (every control, effect order, preset management).
 
+mod calibrate_ui;
 mod effects;
 mod help;
 pub mod icon;
@@ -54,6 +55,7 @@ pub struct App {
     ctx: egui::Context,
     spectrum: spectrum::Spectrum,
     test: test_voice::TestVoice,
+    calibration: calibrate_ui::CalibrationUi,
     /// Windows privacy settings block the microphone (checked on start and focus).
     mic_blocked: bool,
     /// How long the running mic has delivered exact digital silence.
@@ -114,6 +116,7 @@ impl App {
             ctx: cc.egui_ctx.clone(),
             spectrum: Default::default(),
             test: Default::default(),
+            calibration: Default::default(),
             mic_blocked: voice_changer::audio::privacy::microphone_blocked(),
             silent_for: 0.0,
             update: Arc::default(),
@@ -270,6 +273,7 @@ impl App {
             self.engine.shared.scope.enabled.store(false, Relaxed);
         }
         self.test_tick(ctx);
+        self.calibration_tick(ctx);
     }
 
     // ---- sections ------------------------------------------------------------------------
@@ -422,6 +426,7 @@ impl App {
                 }
             }
 
+            self.calibration_row(ui);
             self.mic_warning(ui);
             self.cable_indicator(ui);
         });

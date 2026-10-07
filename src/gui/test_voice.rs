@@ -31,6 +31,11 @@ pub struct TestVoice {
 }
 
 impl App {
+    /// Not recording a test clip (the mic tap is free for other uses).
+    pub(super) fn test_idle(&self) -> bool {
+        self.test.recording.is_none()
+    }
+
     fn start_test_recording(&mut self) {
         let rate = self.status.sample_rate.max(8_000);
         let (tx, rx) = RingBuffer::new((rate as f32 * (SECONDS + 1.0)) as usize);
@@ -116,7 +121,7 @@ impl App {
             let active = self.is_active();
             let label = if self.test.clip.is_some() { "Record again" } else { "Test my voice" };
             if ui
-                .add_enabled(active, egui::Button::new(label))
+                .add_enabled(active && !self.calibration.busy(), egui::Button::new(label))
                 .on_hover_text("Record 5 seconds, then hear it with your current effects")
                 .on_disabled_hover_text("Press Start first")
                 .clicked()

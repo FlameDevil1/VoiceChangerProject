@@ -5,6 +5,7 @@
 
 pub mod audio;
 pub mod backup;
+pub mod calibrate;
 pub mod config;
 pub mod dsp;
 pub mod hotkeys;
