@@ -13,6 +13,7 @@ pub mod shared_params;
 pub mod simd;
 pub mod spectral;
 pub mod util;
+pub mod wsola;
 
 pub use chain::{Chain, EffectKind, FxParams, FxSettings};
 pub use drift::DriftResampler;

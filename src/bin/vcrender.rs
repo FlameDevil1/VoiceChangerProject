@@ -3,12 +3,18 @@
 //!   vcrender voice.mp3                       -> voice_vc.wav next to the input
 //!   vcrender a.wav b.flac -o out\            -> batch, rendered in parallel
 //!   vcrender in.wav -o out.wav --in-gain -3 --pcm16
+//!   vcrender talk.wav --speed 1.25 --mp3      -> faster (same pitch), as MP3
+//!
+//! Uses the same export pipeline as the app's "Process files": output is aligned with the input
+//! (no processing delay at the start) and runs on until reverb tails have finished.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use voice_changer::dsp::{CoreParams, EffectKind, FxSettings, db_to_gain};
-use voice_changer::offline::{self, WavFormat};
+use voice_changer::offline;
+use voice_changer::offline::export::{self, Format};
 
 const USAGE: &str = "\
 Usage: vcrender [options] <input>...
@@ -17,7 +23,7 @@ Applies the voice changer chain to audio files (WAV, MP3, FLAC, OGG).
 
 Options:
   -o, --out <path>      Output file (one input) or directory (several inputs).
-                        Default: <input>_vc.wav next to each input.
+                        Default: <input>_vc.wav (or .mp3) next to each input.
       --in-gain <dB>    Input gain (default 0)
       --out-gain <dB>   Output gain (default 0)
       --pitch <st>      Pitch shift in semitones, -12..12 (enables pitch & formant)
@@ -30,6 +36,8 @@ Options:
       --bypass          Skip effects (gains still apply)
       --channel <c>     mix | left | right (default mix)
       --pcm16           Write 16-bit PCM instead of 32-bit float
+      --mp3             Write MP3 (Windows' built-in encoder, 160 kbps)
+      --speed <x>       Playback speed 0.5..2 with the pitch kept (default 1)
       --block <frames>  Processing block size (default 480, same as live)
   -j, --jobs <n>        Parallel files (default: all cores)
   -h, --help            Show this help";
@@ -40,7 +48,8 @@ struct Opts {
     params: CoreParams,
     fx: FxSettings,
     channel: Option<usize>,
-    format: WavFormat,
+    format: Format,
+    speed: f32,
     block: usize,
     jobs: usize,
 }
@@ -52,7 +61,8 @@ fn parse() -> Result<Opts, String> {
         params: CoreParams::default(),
         fx: FxSettings::default(),
         channel: None,
-        format: WavFormat::Float32,
+        format: Format::Wav32,
+        speed: 1.0,
         block: offline::DEFAULT_BLOCK,
         jobs: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4),
     };
@@ -80,7 +90,9 @@ fn parse() -> Result<Opts, String> {
                 std::process::exit(0);
             }
             "--bypass" => o.params.bypass = true,
-            "--pcm16" => o.format = WavFormat::Pcm16,
+            "--pcm16" => o.format = Format::Wav16,
+            "--mp3" => o.format = Format::Mp3,
+            "--speed" => o.speed = num(args.next(), &a)?.clamp(export::MIN_SPEED, export::MAX_SPEED),
             "--block" => o.block = num(args.next(), &a)?.max(1.0) as usize,
             "-j" | "--jobs" => o.jobs = num(args.next(), &a)?.max(1.0) as usize,
             "--channel" => {
@@ -131,11 +143,12 @@ fn list_fx() {
     }
 }
 
-fn output_path(input: &Path, out: Option<&Path>, many: bool, with_ext: bool) -> PathBuf {
+fn output_path(input: &Path, out: Option<&Path>, many: bool, with_ext: bool, format: Format) -> PathBuf {
     let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let out_ext = format.extension();
     let name = match input.extension().and_then(|e| e.to_str()) {
-        Some(ext) if with_ext => format!("{stem}_{ext}_vc.wav"),
-        _ => format!("{stem}_vc.wav"),
+        Some(ext) if with_ext => format!("{stem}_{ext}_vc.{out_ext}"),
+        _ => format!("{stem}_vc.{out_ext}"),
     };
     match out {
         Some(o) if many || o.is_dir() => o.join(name),
@@ -148,14 +161,15 @@ fn output_path(input: &Path, out: Option<&Path>, many: bool, with_ext: bool) -> 
 /// added so parallel workers never write the same file; an output may never overwrite an input.
 fn plan_outputs(o: &Opts) -> Result<Vec<PathBuf>, String> {
     let many = o.inputs.len() > 1;
-    let plain: Vec<PathBuf> = o.inputs.iter().map(|i| output_path(i, o.out.as_deref(), many, false)).collect();
+    let plain: Vec<PathBuf> =
+        o.inputs.iter().map(|i| output_path(i, o.out.as_deref(), many, false, o.format)).collect();
     let outputs: Vec<PathBuf> = o
         .inputs
         .iter()
         .zip(&plain)
         .map(|(i, p)| {
             let clash = plain.iter().filter(|q| *q == p).count() > 1;
-            if clash { output_path(i, o.out.as_deref(), many, true) } else { p.clone() }
+            if clash { output_path(i, o.out.as_deref(), many, true, o.format) } else { p.clone() }
         })
         .collect();
     let key = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
@@ -177,9 +191,15 @@ fn render_one(input: &Path, output: &Path, o: &Opts) -> Result<f64, String> {
     let mono = offline::to_mono(&audio, o.channel);
     let decoded = t.elapsed();
     let t = Instant::now();
-    let out = offline::render(&mono, audio.rate, o.params, &o.fx, o.block);
+    let stretched = export::time_stretch(&mono, audio.rate, o.speed);
+    let never = AtomicBool::new(false);
+    let out = export::render_aligned(&stretched, audio.rate, o.params, &o.fx, o.block, &|_| {}, &never)?;
     let rendered = t.elapsed();
-    offline::save_wav(output, &out, audio.rate, o.format)?;
+    match o.format {
+        Format::Wav32 => offline::save_wav(output, &out, audio.rate, offline::WavFormat::Float32)?,
+        Format::Wav16 => offline::save_wav(output, &out, audio.rate, offline::WavFormat::Pcm16)?,
+        Format::Mp3 => offline::mp3::encode(output, &out, audio.rate, 160)?,
+    }
     let secs = audio.duration_secs();
     println!(
         "{} -> {}  ({secs:.1} s, {} Hz, {} ch; decode {:.0} ms, process {:.1} ms = {:.0}x real time)",

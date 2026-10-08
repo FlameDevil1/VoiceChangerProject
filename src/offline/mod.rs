@@ -4,7 +4,9 @@
 //! file rendered here sounds exactly like the live virtual mic.
 
 pub mod analysis;
+pub mod export;
 pub mod io;
+pub mod mp3;
 pub mod signals;
 
 use crate::dsp::{Chain, CoreParams, EngineCore, FxParams, FxSettings};
