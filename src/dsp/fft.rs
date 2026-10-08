@@ -16,7 +16,8 @@ pub fn spectrum(x: &[f32]) -> Vec<f32> {
     (0..n / 2).map(|k| (re[k] * re[k] + im[k] * im[k]).sqrt() * scale).collect()
 }
 
-fn fft_in_place(re: &mut [f32], im: &mut [f32]) {
+/// In-place radix-2 FFT (no allocation). `re.len()` must be a power of two.
+pub(crate) fn fft_in_place(re: &mut [f32], im: &mut [f32]) {
     let n = re.len();
     // Bit-reversal permutation.
     let mut j = 0;

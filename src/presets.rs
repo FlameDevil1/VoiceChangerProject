@@ -132,7 +132,14 @@ pub const SCENARIOS: [Scenario; 6] = [
         name: "Cheap headset",
         description: "Thin, hissy, pumping gaming headset",
         bad_mic: &[("low_cut", 250.0), ("high_cut", 5000.0), ("hiss", 35.0), ("clip", 20.0), ("pump", 50.0)],
-        network: &[("amount", 15.0), ("lag", 0.0), ("drift", 0.0), ("freeze", 0.0), ("codec_rate", 16000.0)],
+        network: &[
+            ("amount", 15.0),
+            ("lag", 0.0),
+            ("drift", 0.0),
+            ("freeze", 0.0),
+            ("artifacts", 25.0),
+            ("codec_rate", 16000.0),
+        ],
     },
     Scenario {
         name: "Laggy Wi-Fi",
@@ -146,6 +153,7 @@ pub const SCENARIOS: [Scenario; 6] = [
             ("choppy", 20.0),
             ("drift", 40.0),
             ("freeze", 10.0),
+            ("robotic", 15.0),
         ],
     },
     Scenario {
@@ -160,7 +168,8 @@ pub const SCENARIOS: [Scenario; 6] = [
             ("choppy", 60.0),
             ("drift", 10.0),
             ("freeze", 40.0),
-            ("bits", 10.0),
+            ("robotic", 40.0),
+            ("artifacts", 55.0),
             ("codec_rate", 8000.0),
             ("variation", 30.0),
         ],
@@ -182,7 +191,7 @@ pub const SCENARIOS: [Scenario; 6] = [
             ("pump", 70.0),
             ("drift", 20.0),
         ],
-        network: &[("amount", 10.0), ("lag", 0.0), ("drift", 0.0), ("codec_rate", 16000.0)],
+        network: &[("amount", 10.0), ("lag", 0.0), ("drift", 0.0), ("artifacts", 20.0), ("codec_rate", 16000.0)],
     },
     Scenario {
         name: "Bathroom speakerphone",

@@ -1,18 +1,21 @@
 //! Bad connection: an unreliable voice call. Lag spikes (audio stops, continues late, then skips
 //! or speeds up to catch up), packet loss (pieces go missing or repeat), robotic jitter glitches,
-//! cut-outs, falling behind and catching up, freeze/loop, and a low-quality codec.
+//! cut-outs, falling behind and catching up, freeze/loop, robotic voice, compression artifacts
+//! and a low-quality codec.
 //!
 //! Everything plays from a history of the input. While no problem is happening the output *is*
 //! the input: no delay, bit-exact. Delay exists only during a lag or catch-up, and it is the
 //! effect's intent, not processing latency, so it is not reported as latency. Problems are random
 //! events started on a 10 ms tick at absolute sample positions, so the output never depends on
 //! how audio is split into blocks. Switching between live audio, silence and replayed audio is
-//! always crossfaded.
+//! always crossfaded. Robotic voice and compression artifacts need a short spectral stage
+//! (`dsp::spectral`), which adds a fixed 10.7 ms of delay while either control is above 0.
 
 use crate::dsp::Processor;
 use crate::dsp::biquad::{Biquad, Shape};
 use crate::dsp::params::{EffectParams, EffectSpec, ParamSpec};
-use crate::dsp::util::{HannTable, Rng};
+use crate::dsp::spectral::{FRAME, SpectralCodec};
+use crate::dsp::util::{HannTable, Rng, SmoothedValue};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -52,10 +55,22 @@ pub const SPEC: EffectSpec = EffectSpec {
             step: 5.0,
             help: "Length of each missing or repeated piece.",
         },
-        pct("jitter", "Robotic glitches", 30.0, "The metallic warble when a call runs out of audio."),
+        pct("jitter", "Jitter", 30.0, "Short metallic warbles when audio arrives late or out of order."),
+        pct(
+            "robotic",
+            "Robotic voice",
+            0.0,
+            "Stretches where your voice turns metallic and synthetic, like bad text-to-speech. Adds 10 ms of delay while above 0.",
+        ),
         pct("choppy", "Cut-outs", 30.0, "Short, abrupt silences mid-word."),
         pct("drift", "Fall behind", 20.0, "Audio slowly falls behind, then speeds up to catch up."),
         pct("freeze", "Freeze / loop", 15.0, "The last moment repeats a few times before audio resumes."),
+        pct(
+            "artifacts",
+            "Compression",
+            0.0,
+            "Low-bitrate artifacts: watery, swirly, underwater sound with missing detail. Adds 10 ms of delay while above 0.",
+        ),
         ParamSpec {
             key: "bits",
             label: "Codec bits",
@@ -94,11 +109,21 @@ pub const SPEC: EffectSpec = EffectSpec {
         ("choppy", 0.0, 80.0),
         ("drift", 0.0, 60.0),
         ("freeze", 0.0, 50.0),
+        ("robotic", 0.0, 60.0),
+        ("artifacts", 0.0, 60.0),
     ],
     presets: &[
         ("Mild", &[("amount", 20.0)]),
         ("Bad", &[("amount", 55.0), ("codec_rate", 16000.0)]),
-        ("Unusable", &[("amount", 95.0), ("bits", 8.0), ("codec_rate", 8000.0), ("variation", 30.0)]),
+        (
+            "Unusable",
+            &[("amount", 95.0), ("robotic", 50.0), ("artifacts", 70.0), ("codec_rate", 8000.0), ("variation", 30.0)],
+        ),
+        ("Low bitrate", &[("amount", 10.0), ("artifacts", 60.0), ("codec_rate", 12000.0)]),
+        (
+            "Robotic",
+            &[("amount", 60.0), ("robotic", 90.0), ("lag", 0.0), ("loss", 20.0), ("choppy", 10.0), ("drift", 0.0)],
+        ),
         (
             "Laggy",
             &[("amount", 60.0), ("lag", 90.0), ("loss", 10.0), ("jitter", 0.0), ("choppy", 0.0), ("drift", 60.0)],
@@ -119,17 +144,19 @@ const LAG_MS: usize = 2;
 const LOSS: usize = 3;
 const PACKET_MS: usize = 4;
 const JITTER: usize = 5;
-const CHOPPY: usize = 6;
-const DRIFT: usize = 7;
-const FREEZE: usize = 8;
-const BITS: usize = 9;
-const CODEC_RATE: usize = 10;
-const VARIATION: usize = 11;
+const ROBOTIC: usize = 6;
+const CHOPPY: usize = 7;
+const DRIFT: usize = 8;
+const FREEZE: usize = 9;
+const ARTIFACTS: usize = 10;
+const BITS: usize = 11;
+const CODEC_RATE: usize = 12;
+const VARIATION: usize = 13;
 
 /// The problems that happen as random events, in `RATE` order.
-const EVENTS: [usize; 6] = [LAG, LOSS, JITTER, CHOPPY, DRIFT, FREEZE];
+const EVENTS: [usize; 7] = [LAG, LOSS, JITTER, ROBOTIC, CHOPPY, DRIFT, FREEZE];
 /// Events per second at 100 % weight and 100 % overall amount.
-const RATE: [f32; 6] = [0.08, 0.25, 0.2, 0.6, 0.04, 0.08];
+const RATE: [f32; 7] = [0.08, 0.25, 0.2, 0.06, 0.6, 0.04, 0.08];
 /// Longest lag the history is sized for.
 const MAX_LAG_S: f32 = 2.0;
 /// Playback speed while falling behind and while catching up.
@@ -372,6 +399,12 @@ pub struct Network {
     // Codec: anti-alias filter, sample-and-hold downsampling, then bit reduction.
     lp: [Biquad; 2],
     lp_hz: f32,
+    // Spectral stage: robotic voice bursts and compression artifacts.
+    spectral: SpectralCodec,
+    spectral_mix: SmoothedValue,
+    spectral_active: bool,
+    robot_left: u32,
+    robot_mix: SmoothedValue,
     hold: f32,
     hold_phase: f32,
 }
@@ -405,7 +438,17 @@ impl Network {
             lp_hz: 0.0,
             hold: 0.0,
             hold_phase: 0.0,
+            spectral: SpectralCodec::new(48_000.0),
+            spectral_mix: SmoothedValue::new(0.0, 48_000.0, 0.02),
+            spectral_active: false,
+            robot_left: 0,
+            robot_mix: SmoothedValue::new(0.0, 48_000.0, 0.05),
         }
+    }
+
+    /// Robotic voice or compression is set, so the spectral stage must run.
+    fn spectral_wanted(&self) -> bool {
+        self.params.get(ARTIFACTS) > 0.0 || self.params.get(ROBOTIC) > 0.0
     }
 
     /// Uniform random in [lo, hi).
@@ -461,6 +504,10 @@ impl Network {
                 let left = samples(self.sr, self.uniform(300.0, 1200.0) * sev);
                 self.phase = Phase::Warble { left, frame_left: 0, glitch: false };
             }
+            ROBOTIC => {
+                // Runs alongside other problems; leaves the phase idle.
+                self.robot_left = samples(self.sr, self.uniform(800.0, 3000.0) * sev);
+            }
             CHOPPY => {
                 let left = samples(self.sr, self.uniform(20.0, 80.0) * (0.5 + 0.5 * sev));
                 self.phase = Phase::Chop { left };
@@ -484,7 +531,7 @@ impl Network {
     }
 
     /// Every 10 ms: drift the "weather" (how bad things are right now) and maybe start a problem.
-    fn on_tick(&mut self, amount: f32, weights: &[f32; 6], variation: f32) {
+    fn on_tick(&mut self, amount: f32, weights: &[f32; 7], variation: f32) {
         if self.weather_left == 0 {
             self.weather_target = 1.0 + variation * (2.0 * self.rng.next_f32() - 1.0);
             self.weather_left = 300 + (self.rng.next_f32() * 700.0) as u32;
@@ -634,13 +681,32 @@ impl Processor for Network {
         self.reader = Wsola::new(sample_rate);
         self.tick_len = samples(self.sr, 10.0);
         self.lp_hz = 0.0;
+        self.spectral = SpectralCodec::new(sample_rate);
+        // Start in the requested state (a chain built with it on starts on, no fade).
+        let on = self.spectral_wanted();
+        self.spectral_mix = SmoothedValue::new(if on { 1.0 } else { 0.0 }, sample_rate, 0.02);
+        self.spectral_active = on;
+        self.robot_mix = SmoothedValue::new(0.0, sample_rate, 0.05);
         self.reset();
+    }
+
+    fn latency(&self) -> usize {
+        if self.spectral_active { FRAME } else { 0 }
+    }
+
+    fn max_latency(&self) -> usize {
+        FRAME
     }
 
     fn process(&mut self, buf: &mut [f32]) {
         let p = &self.params;
         let amount = p.get(AMOUNT) / 100.0;
-        let weights: [f32; 6] = std::array::from_fn(|i| p.get(EVENTS[i]) / 100.0);
+        let weights: [f32; 7] = std::array::from_fn(|i| p.get(EVENTS[i]) / 100.0);
+        let artifacts = p.get(ARTIFACTS) / 100.0;
+        let wanted = self.spectral_wanted();
+        self.spectral_mix.set_target(if wanted { 1.0 } else { 0.0 });
+        self.spectral_active = wanted || !self.spectral_mix.is_settled() || self.spectral_mix.current() > 0.0;
+        let spectral = self.spectral_active;
         let variation = p.get(VARIATION) / 100.0;
         let packet = samples(self.sr, p.get(PACKET_MS));
         let trigger = p.trigger.load(Relaxed);
@@ -682,6 +748,18 @@ impl Processor for Network {
             };
             self.n += 1;
 
+            // Robotic bursts fade in and out; the codec reads the depth at each frame.
+            if self.robot_left > 0 {
+                self.robot_left -= 1;
+            }
+            self.robot_mix.set_target(if self.robot_left > 0 { 1.0 } else { 0.0 });
+            let robot = self.robot_mix.next_value();
+            let shaped = self.spectral.next(y, spectral, artifacts, robot);
+            if spectral {
+                let m = self.spectral_mix.next_value();
+                y += (shaped - y) * m;
+            }
+
             if downsample {
                 let f = {
                     let t = self.lp[0].process(y);
@@ -702,7 +780,7 @@ impl Processor for Network {
 
         let delay = if self.cur == Src::Reader { (self.n as f64 - self.reader.position()).max(0.0) } else { 0.0 };
         self.params.meter.store((delay / self.sr as f64 * 1000.0) as f32);
-        let busy = self.phase != Phase::Idle || self.fade_left > 0 || self.glitch_pending;
+        let busy = self.phase != Phase::Idle || self.fade_left > 0 || self.glitch_pending || self.robot_left > 0;
         self.params.status.store(if busy { STATUS_BUSY } else { 0 }, Relaxed);
     }
 
@@ -721,6 +799,10 @@ impl Processor for Network {
         self.lp.iter_mut().for_each(Biquad::reset);
         self.hold = 0.0;
         self.hold_phase = 0.0;
+        self.spectral.reset();
+        self.robot_left = 0;
+        self.robot_mix.set_target(0.0);
+        self.robot_mix.snap();
         self.params.meter.store(0.0);
         self.params.status.store(0, Relaxed);
         // `seen_trigger` is kept: a glitch requested while off plays once the effect is on.
@@ -774,6 +856,8 @@ mod tests {
             ("freeze", 100.0),
             ("bits", 10.0),
             ("codec_rate", 12000.0),
+            ("robotic", 100.0),
+            ("artifacts", 50.0),
         ];
         let a = run(&x, &all, 480);
         assert_eq!(a, run(&x, &all, 37));
@@ -871,6 +955,69 @@ mod tests {
         assert!(gaps(&x, &y) >= 10, "a lag of 300+ ms follows the warble: {}", gaps(&x, &y));
         let tail = 48_000;
         assert_eq!(&y[y.len() - tail..], &x[x.len() - tail..], "back to exact live audio");
+    }
+
+    #[test]
+    fn spectral_stage_alone_is_a_clean_10ms_delay() {
+        // Robotic voice set but no events (amount 0): the stage runs and changes nothing.
+        let x = signals::vowel(48_000, 1.0, 140.0);
+        let mut fx = Network::new(params(&[("amount", 0.0), ("robotic", 50.0)]));
+        fx.prepare(48_000.0, 480);
+        assert_eq!(fx.latency(), FRAME);
+        let mut y = x.clone();
+        y.chunks_mut(480).for_each(|c| fx.process(c));
+        assert!(analysis::max_abs_diff(&y[FRAME..], &x[..x.len() - FRAME]) < 1e-4);
+
+        let mut off = Network::new(params(&CALM));
+        off.prepare(48_000.0, 480);
+        assert_eq!(off.latency(), 0, "no delay unless robotic voice or compression is used");
+    }
+
+    #[test]
+    fn compression_removes_detail_but_keeps_the_voice() {
+        let x = signals::noise(48_000, 1.0, 0.3, 4);
+        let y = run(&x, &[("amount", 0.0), ("artifacts", 100.0)], 480);
+        let band = |v: &[f32], lo: f32, hi: f32| {
+            let mut f = [Biquad::default(); 2];
+            f[0].set(Shape::HighPass, 48_000.0, lo, 0.707, 0.0);
+            f[1].set(Shape::LowPass, 48_000.0, hi, 0.707, 0.0);
+            analysis::rms(
+                &v.iter()
+                    .map(|s| {
+                        let t = f[0].process(*s);
+                        f[1].process(t)
+                    })
+                    .collect::<Vec<_>>()[4800..],
+            )
+        };
+        assert!(band(&y, 9000.0, 20000.0) < band(&x, 9000.0, 20000.0) * 0.2, "treble kept");
+        assert!(band(&y, 300.0, 2000.0) > band(&x, 300.0, 2000.0) * 0.3, "voice band lost");
+        // Holes come and go: frames differ in which bins survive, unlike the input's steady noise.
+        assert!(analysis::rms(&y[4800..]) > analysis::rms(&x[4800..]) * 0.2);
+    }
+
+    #[test]
+    fn robotic_voice_buzzes_at_the_frame_rate() {
+        let x = signals::vowel(48_000, 30.0, 140.0);
+        let settings = [
+            ("amount", 100.0),
+            ("robotic", 100.0),
+            ("lag", 0.0),
+            ("loss", 0.0),
+            ("jitter", 0.0),
+            ("choppy", 0.0),
+            ("drift", 0.0),
+            ("freeze", 0.0),
+            ("variation", 0.0),
+        ];
+        let y = run(&x, &settings, 480);
+        let buzz = 48_000.0 / crate::dsp::spectral::HOP as f32;
+        let robotic = y
+            .chunks(4800)
+            .filter_map(|c| analysis::estimate_f0(c, 48_000, 50.0, 400.0))
+            .filter(|f| (f - buzz).abs() < 6.0)
+            .count();
+        assert!(robotic >= 3, "{robotic} windows at the {buzz} Hz robot pitch");
     }
 
     #[test]
