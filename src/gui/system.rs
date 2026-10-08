@@ -61,7 +61,7 @@ impl System {
 }
 
 impl App {
-    fn toast(&self, text: &str) {
+    pub(super) fn toast(&self, text: &str) {
         if let Some(t) = &self.system.toaster {
             t.show(text);
         }

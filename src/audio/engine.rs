@@ -57,6 +57,8 @@ pub enum Command {
     SetChainOrder(Vec<EffectKind>),
     /// Copy the raw (pre-effects) mic signal into this ring, e.g. to record a test clip; `None` stops.
     SetTap(Option<Producer<f32>>),
+    /// Copy what the virtual mic gets (after effects) into this ring, to record it; `None` stops.
+    SetRecordTap(Option<Producer<f32>>),
     RefreshDevices,
     Shutdown,
 }
@@ -158,6 +160,7 @@ enum SinkMsg {
     Set(SinkKind, Option<Producer<f32>>),
     Chain(Chain),
     Tap(Option<Producer<f32>>),
+    Record(Option<Producer<f32>>),
 }
 
 /// Objects the capture callback hands back so they are freed off the audio thread.
@@ -253,6 +256,13 @@ impl Controller {
                     && running.sink_tx.push(SinkMsg::Tap(tap)).is_err()
                 {
                     log::warn!("sink queue full; test recording not started");
+                }
+            }
+            Command::SetRecordTap(tap) => {
+                if let Some(running) = &mut self.running
+                    && running.sink_tx.push(SinkMsg::Record(tap)).is_err()
+                {
+                    log::warn!("sink queue full; recording not started");
                 }
             }
             Command::SetChainOrder(order) => {
@@ -378,6 +388,7 @@ impl Controller {
             rate: engine_rate as f32,
             cable: None,
             tap: None,
+            record: None,
             monitor: None,
             sink_rx,
             ret_tx,
@@ -577,6 +588,8 @@ struct CaptureState {
     cable: Option<Producer<f32>>,
     /// Raw mic copy for a test recording.
     tap: Option<Producer<f32>>,
+    /// Processed copy (what the virtual mic gets) for "Record".
+    record: Option<Producer<f32>>,
     monitor: Option<Producer<f32>>,
     sink_rx: Consumer<SinkMsg>,
     ret_tx: Producer<Retired>,
@@ -612,6 +625,11 @@ impl CaptureState {
                 }
                 SinkMsg::Tap(new) => {
                     if let Some(old) = std::mem::replace(&mut self.tap, new) {
+                        let _ = self.ret_tx.push(Retired::Producer(old));
+                    }
+                }
+                SinkMsg::Record(new) => {
+                    if let Some(old) = std::mem::replace(&mut self.record, new) {
                         let _ = self.ret_tx.push(Retired::Producer(old));
                     }
                 }
@@ -656,6 +674,9 @@ impl CaptureState {
             sh.out_peak.fetch_max(dsp::peak(buf));
             // If an output stalls, its ring fills; drop the overflow rather than block.
             if let Some(tx) = &mut self.cable {
+                let _ = tx.push_partial_slice(buf);
+            }
+            if let Some(tx) = &mut self.record {
                 let _ = tx.push_partial_slice(buf);
             }
             if let Some(tx) = &mut self.monitor {

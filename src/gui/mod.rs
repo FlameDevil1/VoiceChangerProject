@@ -8,11 +8,13 @@
 
 mod calibrate_ui;
 mod effects;
+mod files;
 mod fine_tune;
 mod help;
 pub mod icon;
 mod presets;
 mod problems;
+mod recorder;
 mod spectrum;
 mod system;
 mod test_voice;
@@ -71,6 +73,8 @@ pub struct App {
     fx_history: Vec<FxSettings>,
     /// The bad connection was turned on only to play a glitch burst (since then).
     glitch_only: Option<Instant>,
+    files: files::FileBatch,
+    recorder: recorder::Recorder,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -135,6 +139,8 @@ impl App {
             ),
             fx_history: Vec::new(),
             glitch_only: None,
+            files: Default::default(),
+            recorder: Default::default(),
             _instance: instance,
         };
         if check_updates {
@@ -558,6 +564,7 @@ impl App {
                 }
             });
             self.test_voice_row(ui);
+            ui.horizontal(|ui| self.record_button(ui));
             if !advanced {
                 let mut fx = self.cfg.fx.clone();
                 ui.horizontal_wrapped(|ui| {
@@ -739,12 +746,14 @@ impl eframe::App for App {
     /// Runs before every frame and on wake-ups while hidden (hotkeys, tray).
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.background(ctx);
+        self.recorder_tick(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.intercept_close(&ctx);
         self.tick(&ctx);
+        self.handle_dropped_files(&ctx);
         let advanced = self.cfg.ui_mode == UiMode::Advanced;
         // Ctrl+Z undoes the last Randomize / preset click (text fields keep their own undo).
         let undo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
@@ -765,6 +774,7 @@ impl eframe::App for App {
                     self.preset_manager(ui);
                     self.problems_section(ui, true);
                     self.effects_section(ui);
+                    self.files_section(ui);
                     self.system_section(ui);
                     self.performance_section(ui);
                     self.help_section(ui);
@@ -772,6 +782,7 @@ impl eframe::App for App {
                     self.preset_grid(ui);
                     self.fine_tune(ui);
                     self.problems_section(ui, false);
+                    self.files_section(ui);
                     self.controls_section(ui, false);
                 }
                 ui.add_space(4.0);

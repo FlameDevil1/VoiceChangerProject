@@ -2,6 +2,7 @@
 
 use crate::dsp::FxSettings;
 use crate::hotkeys::HotkeyConfig;
+use crate::offline::export::Format;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -105,6 +106,13 @@ pub struct Config {
     pub locked: BTreeSet<String>,
     /// "Hear myself" skips the bad connection effect, so you never hear your own voice lagging.
     pub monitor_skip_lag: bool,
+    /// Where "Record" saves (`None` = Music\Voice Changer) and in which format.
+    pub recordings_dir: Option<PathBuf>,
+    pub record_format: Format,
+    /// Processed files go here (`None` = next to the originals), in this format and speed.
+    pub export_dir: Option<PathBuf>,
+    pub export_format: Format,
+    pub export_speed: f32,
 }
 
 impl Default for Config {
@@ -135,7 +143,20 @@ impl Default for Config {
             check_updates: true,
             locked: BTreeSet::new(),
             monitor_skip_lag: true,
+            recordings_dir: None,
+            record_format: Format::Wav16,
+            export_dir: None,
+            export_format: Format::Wav32,
+            export_speed: 1.0,
         }
+    }
+}
+
+/// Default folder for recordings: `Music\Voice Changer` in the user's profile.
+pub fn default_recordings_dir() -> PathBuf {
+    match std::env::var_os("USERPROFILE") {
+        Some(home) => PathBuf::from(home).join("Music").join("Voice Changer"),
+        None => app_dir().join("Recordings"),
     }
 }
 

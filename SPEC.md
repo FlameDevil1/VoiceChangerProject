@@ -263,6 +263,13 @@ Two effects, each a spec table like the others (so presets, randomize, CLI and G
   controller thread for half a megabyte. It is never read or written while the effect is off.
 - Random events start on a 10 ms tick at absolute sample positions with a seeded RNG, so output
   is block-size invariant and reproducible.
+- **Robotic voice and compression artifacts** (step 10, from user feedback) recreate what those
+  connection problems do to the audio rather than simulating packets and real codecs: cheaper,
+  predictable, one slider each. A streaming STFT stage (512-sample frames, sqrt-Hann, exact
+  10.7 ms delayed copy when idle) drops weak bins per band with moving holes, flickers the
+  bandwidth and quantises levels (the watery, swirly low-bitrate sound), and in random stretches
+  locks phases into a buzz at the frame rate (metallic, text-to-speech-like). It runs, and adds
+  its fixed 10.7 ms, only while either control is above 0.
 
 ## 4. Presets: **done (step 5)**
 
@@ -314,14 +321,33 @@ preset management, every effect panel with ordering, and latency/performance det
 Tray icon, close to tray and start hidden: done (step 6). Later: Test button, spectrum visualizer (FFT on the UI side from a ring copy, capped at the meter
 frame rate), launch on Windows startup (with the installer).
 
-## 7. File processing (offline)
+## 7. File processing (offline): **UI done (step 10)**
 
 **Engine done (step 2).** `offline::render` runs the same `EngineCore` over files with the live
 block size, so files sound identical to the virtual mic. One code path serves file export, the
 future Test button and the DSP test harness.
 
 - Decoding: Symphonia (WAV, MP3, FLAC, OGG/Vorbis). Output: WAV, 32-bit float or 16-bit with
-  TPDF dither (`hound`). MP3 export (LAME) comes with the file-processing UI (step 10).
+  TPDF dither (`hound`), or **MP3 through Windows' built-in Media Foundation encoder** (160 kbps;
+  32/44.1/48 kHz, other rates resampled with a windowed sinc). Changed from LAME: LAME is LGPL,
+  so shipping it inside the MIT `.exe` would mean also shipping relinkable objects, and the
+  pure-Rust encoders are only months old. Windows "N" editions need the Media Feature Pack; the
+  app says so and WAV still works.
+- **Export pipeline** (`offline::export`, shared by the app and `vcrender`): decode, mono,
+  **speed** 50–200 % with the pitch kept (WSOLA, the reader the bad connection uses live),
+  effects, then **aligned** output: the effects' processing delay is removed from the start and
+  the end runs on for reverb/lag tails, with trailing silence trimmed. Mic gains are not applied
+  to files (they are for your microphone). Output names: `<name>_vc.<ext>`, then " (2)", ...;
+  never an existing file or an input.
+- **Files & recording** section (both modes, collapsed by default):
+  - **Record** saves exactly what the virtual mic sends (voice, problems, mute, bypass) from an
+    output tap in the capture callback. A writer thread streams to disk (a 10 s ring between
+    them), so long recordings use no memory; MP3 is encoded on stop. Default folder
+    `Music\Voice Changer`, files named by local date and time. Also a button under Controls.
+  - **Process audio files**: add with a dialog or **drop files on the window** (an overlay shows
+    while dragging), speed, format, "next to the originals" or a folder; runs on half the cores
+    (live audio keeps its headroom) with per-file progress, cancel (partial files deleted),
+    preview on the Hear-myself device, Show in Explorer, Open output folder.
 - `vcrender` CLI: single or batch files, rendered in parallel across all cores; output names are
   de-duplicated and inputs are never overwritten.
 - Test harness: deterministic generated signals (synthetic vowel with exact pitch/formants,
@@ -384,7 +410,8 @@ should check for VB-CABLE and link to it, not bundle it.
    dropdown parameters; randomize with locks; Simple-mode Fine-tune.
 9. ✅ Bad mic and bad connection (3B), scenarios, master slider, glitch burst (button and
    hotkey), monitor tap point; preset loudness evened out; undo for Randomize and presets.
-10. File processing UI (batch, MP3 export, record-with-effects).
+10. ✅ File processing UI: batch with drag and drop, speed (pitch kept), MP3, record what the
+   virtual mic sends; robotic voice and compression artifacts for the bad connection.
 11. Installer, signing, startup options, stretch features.
 
 Steps 6–7 were moved ahead of 3A/3B: they make the app usable day to day, and the Test button

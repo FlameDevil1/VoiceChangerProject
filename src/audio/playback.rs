@@ -22,25 +22,43 @@ pub struct Playback {
 /// output). Returns at once: a worker thread renders (so the UI never stalls), owns the stream,
 /// and ends when the clip finishes or `stop` is set.
 pub fn play(render: impl FnOnce() -> Vec<f32> + Send + 'static, rate: u32, device: Option<DeviceRef>) -> Arc<Playback> {
+    play_clip(move || Ok((render(), rate)), device)
+}
+
+/// Like `play`, for clips whose sample rate is only known once loaded (e.g. a file).
+pub fn play_clip(
+    load: impl FnOnce() -> Result<(Vec<f32>, u32), String> + Send + 'static,
+    device: Option<DeviceRef>,
+) -> Arc<Playback> {
     let state = Arc::new(Playback::default());
     let st = state.clone();
-    let _ = std::thread::Builder::new().name("test-playback".into()).spawn(move || {
-        let samples = Arc::new(render());
-        st.total.store(samples.len(), Relaxed);
-        if !st.stop.load(Relaxed)
-            && let Err(e) = run(&samples, rate, device.as_ref(), &st)
-        {
-            log::warn!("test playback failed: {e}");
+    let _ = std::thread::Builder::new().name("clip-playback".into()).spawn(move || {
+        match load() {
+            Ok((samples, rate)) if !st.stop.load(Relaxed) => {
+                if let Err(e) = run(samples, rate, device.as_ref(), &st) {
+                    log::warn!("playback failed: {e}");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("playback: {e}"),
         }
         st.finished.store(true, Relaxed);
     });
     state
 }
 
-fn run(samples: &Arc<Vec<f32>>, rate: u32, device: Option<&DeviceRef>, st: &Arc<Playback>) -> Result<(), String> {
+fn run(samples: Vec<f32>, rate: u32, device: Option<&DeviceRef>, st: &Arc<Playback>) -> Result<(), String> {
     let host = cpal::default_host();
     let dev = devices::find(&host, device, false).ok_or("output device not found")?;
-    let channels = dev.default_output_config().map_err(|e| e.to_string())?.channels() as usize;
+    let default = dev.default_output_config().map_err(|e| e.to_string())?;
+    let channels = default.channels() as usize;
+    // Shared-mode devices only run at their own rate: convert the clip instead.
+    let (samples, rate) = match default.sample_rate() {
+        r if r != rate => (crate::offline::export::resample(&samples, rate, r), r),
+        _ => (samples, rate),
+    };
+    let samples = Arc::new(samples);
+    st.total.store(samples.len(), Relaxed);
     let config =
         cpal::StreamConfig { channels: channels as u16, sample_rate: rate, buffer_size: cpal::BufferSize::Default };
     let (data, cb_state) = (samples.clone(), st.clone());

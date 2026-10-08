@@ -44,9 +44,12 @@ The binary is `target/release/voicechanger.exe`.
 8. Hotkeys work while gaming: **Ctrl+Alt+V** effects on/off, **Ctrl+Alt+Page Down/Up** next or
    previous preset, **Ctrl+Alt+N** normal voice, **Ctrl+Alt+M** mute. Change them, or add a
    hold-to-use key, under Advanced → Hotkeys & tray. Closing the window keeps it in the tray.
-9. **Test my voice** records 5 seconds (the virtual mic is muted meanwhile); then play it back as
+9. **Files & recording**: **Record** saves what the virtual mic sends (to `Music\Voice Changer`,
+   WAV or MP3). **Process audio files** gives existing recordings your current voice: drop files
+   on the window, optionally change the speed (pitch kept), and save as WAV or MP3.
+10. **Test my voice** records 5 seconds (the virtual mic is muted meanwhile); then play it back as
    the changed voice (re-rendered with your current settings, so tweak and replay) or the original.
-10. Problems? Advanced → Help & diagnostics → **Copy diagnostics**, and paste it into an issue.
+11. Problems? Advanced → Help & diagnostics → **Copy diagnostics**, and paste it into an issue.
     **Back up settings** saves your settings and presets to one file.
 
 ## Releases
@@ -83,6 +86,7 @@ cargo run --release --bin vcrender -- voice.mp3              # -> voice_vc.wav
 cargo run --release --bin vcrender -- *.wav -o out --pcm16   # batch, parallel
 cargo run --release --bin vcrender -- in.wav --pitch -5 --formant -3   # deeper voice
 cargo run --release --bin vcrender -- in.wav --fx denoise --fx reverb.decay=2.5 --fx radio
+cargo run --release --bin vcrender -- talk.wav --speed 1.25 --mp3   # faster, same pitch, MP3
 cargo run --release --bin vcrender -- --list-fx                        # effects and parameters
 ```
 
