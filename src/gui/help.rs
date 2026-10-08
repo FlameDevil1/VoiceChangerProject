@@ -10,6 +10,45 @@ use voice_changer::dsp::{EffectKind, simd};
 
 const LOG_LINES: usize = 40;
 
+/// "Windows 24H2 (build 26100.4061)", from the registry (GetVersionEx lies without a manifest).
+fn windows_version() -> String {
+    use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW};
+    use windows::core::{HSTRING, w};
+    let key = w!(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+    let text = |name: &str| {
+        let mut buf = [0u16; 64];
+        let mut len = (buf.len() * 2) as u32;
+        // SAFETY: buffer and length describe valid writable memory.
+        let r = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key,
+                &HSTRING::from(name),
+                RRF_RT_REG_SZ,
+                None,
+                Some(buf.as_mut_ptr().cast()),
+                Some(&mut len),
+            )
+        };
+        if r.is_ok() { String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]) } else { String::new() }
+    };
+    let mut ubr = 0u32;
+    let mut len = 4u32;
+    // SAFETY: as above, for one DWORD.
+    let _ = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            key,
+            w!("UBR"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&raw mut ubr).cast()),
+            Some(&mut len),
+        )
+    };
+    format!("Windows {} (build {}.{ubr})", text("DisplayVersion"), text("CurrentBuild"))
+}
+
 impl App {
     pub(super) fn help_section(&mut self, ui: &mut egui::Ui) {
         section(ui, "Help & diagnostics", |ui| {
@@ -115,6 +154,18 @@ impl App {
         let st = &self.status;
         let sh = &self.engine.shared;
         let _ = writeln!(r, "Voice Changer {} ({})", env!("CARGO_PKG_VERSION"), simd::level().label());
+        // The installer leaves its uninstaller next to the app; a portable copy has none.
+        let installed = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|d| d.join("unins000.exe").exists()))
+            .unwrap_or(false);
+        let _ = writeln!(
+            r,
+            "{}; {}; start with Windows: {}",
+            windows_version(),
+            if installed { "installed" } else { "portable" },
+            if self.system.autostart { "on" } else { "off" }
+        );
         let _ = writeln!(
             r,
             "Engine: {:?}; mic \"{}\" @ {} Hz; block {}",
@@ -166,6 +217,10 @@ impl App {
         }
         let keys: Vec<String> = self.cfg.hotkeys.bindings.iter().map(|(a, k)| format!("{a:?}={}", k.label())).collect();
         let _ = writeln!(r, "Hotkeys ({}): {}", if self.cfg.hotkeys.enabled { "on" } else { "off" }, keys.join(", "));
+        if !self.system.admin_seen.is_empty() {
+            let _ =
+                writeln!(r, "Apps running as administrator (hotkeys blocked): {}", self.system.admin_seen.join(", "));
+        }
         let _ = writeln!(
             r,
             "Devices: {} inputs, {} outputs, cable installed: {}",

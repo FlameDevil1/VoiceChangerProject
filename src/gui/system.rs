@@ -290,7 +290,8 @@ impl App {
                 ui.colored_label(
                     AMBER,
                     format!(
-                        "Hotkeys can't reach {}: running as administrator. To use them there, run Voice Changer                          as administrator too (dropping files onto its window won't work then).",
+                        "Hotkeys can't reach {}: running as administrator. To use them there, run Voice Changer \
+                         as administrator too (dropping files onto its window won't work then).",
                         self.system.admin_seen.join(", ")
                     ),
                 );
