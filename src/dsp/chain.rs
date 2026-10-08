@@ -33,13 +33,16 @@ pub enum EffectKind {
     Compressor,
     Reverb,
     Radio,
+    BadMic,
+    Network,
 }
 
 impl EffectKind {
     /// Every effect, in the default processing order: clean up the input first (noise removal
     /// before the gate, so the gate sees a clean signal), then change the voice, shape its tone
-    /// and level, and finally place it in a space or through a "device".
-    pub const ALL: [EffectKind; 9] = [
+    /// and level, and finally place it in a space or through a "device". The bad mic and bad
+    /// connection come last: they happen "after" your voice, in the hardware and the network.
+    pub const ALL: [EffectKind; 11] = [
         EffectKind::Denoise,
         EffectKind::Gate,
         EffectKind::Pitch,
@@ -49,6 +52,8 @@ impl EffectKind {
         EffectKind::Compressor,
         EffectKind::Reverb,
         EffectKind::Radio,
+        EffectKind::BadMic,
+        EffectKind::Network,
     ];
 
     pub fn spec(self) -> &'static EffectSpec {
@@ -62,6 +67,8 @@ impl EffectKind {
             EffectKind::Compressor => &fx::compressor::SPEC,
             EffectKind::Reverb => &fx::reverb::SPEC,
             EffectKind::Radio => &fx::radio::SPEC,
+            EffectKind::BadMic => &fx::badmic::SPEC,
+            EffectKind::Network => &fx::network::SPEC,
         }
     }
 
@@ -81,6 +88,8 @@ impl EffectKind {
             EffectKind::Compressor => "compressor",
             EffectKind::Reverb => "reverb",
             EffectKind::Radio => "radio",
+            EffectKind::BadMic => "badmic",
+            EffectKind::Network => "network",
         }
     }
 
@@ -103,6 +112,8 @@ impl EffectKind {
             EffectKind::Compressor => Box::new(fx::compressor::Compressor::new(params)),
             EffectKind::Reverb => Box::new(fx::reverb::Reverb::new(params)),
             EffectKind::Radio => Box::new(fx::radio::Radio::new(params)),
+            EffectKind::BadMic => Box::new(fx::badmic::BadMic::new(params)),
+            EffectKind::Network => Box::new(fx::network::Network::new(params)),
         }
     }
 }

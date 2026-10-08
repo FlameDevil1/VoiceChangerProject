@@ -128,6 +128,40 @@ fn cases() -> Vec<Case> {
                 &[("tone", -30.0), ("nasal", 40.0), ("breath", 30.0), ("rough", 40.0), ("double", 30.0)],
             ),
         },
+        Case {
+            name: "badmic_headset_phrase",
+            input: phrase,
+            params: unity,
+            fx: fx(
+                EffectKind::BadMic,
+                &[
+                    ("low_cut", 250.0),
+                    ("high_cut", 5000.0),
+                    ("hiss", 35.0),
+                    ("clip", 20.0),
+                    ("pump", 50.0),
+                    ("hum", 30.0),
+                ],
+            ),
+        },
+        Case {
+            name: "network_terrible_vowel",
+            input: || signals::vowel_wobble(RATE, 6.0, 150.0, 0.1, 2.0),
+            params: unity,
+            fx: fx(
+                EffectKind::Network,
+                &[
+                    ("amount", 100.0),
+                    ("lag", 100.0),
+                    ("loss", 100.0),
+                    ("jitter", 100.0),
+                    ("choppy", 100.0),
+                    ("drift", 100.0),
+                    ("freeze", 100.0),
+                    ("codec_rate", 16000.0),
+                ],
+            ),
+        },
         Case { name: "radio_phrase", input: phrase, params: unity, fx: fx(EffectKind::Radio, &[("noise", 30.0)]) },
         Case { name: "denoise_noisy_vowel", input: noisy_vowel, params: unity, fx: fx(EffectKind::Denoise, &[]) },
     ]

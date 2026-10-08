@@ -70,6 +70,9 @@ pub struct EffectParams {
     pub status: AtomicU32,
     /// Effect-specific live readout for the UI (gate gain, gain reduction, voice probability).
     pub meter: AtomicF32,
+    /// One-shot requests from the UI or hotkeys (e.g. a glitch burst): bumped by the UI, and the
+    /// effect acts when it differs from the last value it saw.
+    pub trigger: AtomicU32,
     spec: &'static EffectSpec,
 }
 
@@ -82,6 +85,7 @@ impl EffectParams {
             values: spec.params.iter().map(|p| AtomicF32::new(p.default)).collect(),
             status: AtomicU32::new(0),
             meter: AtomicF32::new(0.0),
+            trigger: AtomicU32::new(0),
             spec,
         }
     }

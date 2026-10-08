@@ -4,11 +4,13 @@
 //! Everything that changes over time is computed per sample from absolute sample counts, so the
 //! output never depends on how audio is split into blocks.
 
+pub mod badmic;
 pub mod character;
 pub mod compressor;
 pub mod denoise;
 pub mod eq;
 pub mod gate;
+pub mod network;
 pub mod pitch_fx;
 pub mod radio;
 pub mod reverb;

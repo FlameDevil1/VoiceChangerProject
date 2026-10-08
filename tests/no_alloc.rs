@@ -42,13 +42,43 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOC: Counting = Counting;
 
+const BAD_MIC_ALL_ON: [(&str, f32); 15] = [
+    ("low_cut", 300.0),
+    ("high_cut", 4000.0),
+    ("clip", 50.0),
+    ("hiss", 50.0),
+    ("hum", 50.0),
+    ("crackle", 80.0),
+    ("pops", 50.0),
+    ("room", 50.0),
+    ("handling", 80.0),
+    ("wind", 50.0),
+    ("drift", 50.0),
+    ("pump", 50.0),
+    ("gate", 50.0),
+    ("dropout", 80.0),
+    ("variation", 50.0),
+];
+
 #[test]
 fn audio_path_never_allocates() {
     let rate = 48_000.0;
     let mut settings = FxSettings::default()
         .with(EffectKind::Pitch, &[("semitones", -4.0), ("formant", -2.0)])
         .with(EffectKind::Reverb, &[("decay", 2.0)])
-        .with(EffectKind::Character, &[("nasal", 30.0), ("breath", 40.0), ("rough", 40.0), ("double", 40.0)]);
+        .with(EffectKind::Character, &[("nasal", 30.0), ("breath", 40.0), ("rough", 40.0), ("double", 40.0)])
+        .with(EffectKind::BadMic, &BAD_MIC_ALL_ON)
+        .with(
+            EffectKind::Network,
+            &[
+                ("amount", 100.0),
+                ("lag", 100.0),
+                ("loss", 100.0),
+                ("drift", 100.0),
+                ("bits", 8.0),
+                ("codec_rate", 8000.0),
+            ],
+        );
     for kind in EffectKind::ALL {
         settings.set_enabled(kind, true);
     }
@@ -75,6 +105,9 @@ fn audio_path_never_allocates() {
         reverb.slot.set_enabled(i % 200 < 150);
         reverb.set(0, (i % 100) as f32);
         fx.get(EffectKind::Eq).set(2, ((i % 48) as f32 - 24.0) / 2.0);
+        if i % 150 == 20 {
+            fx.get(EffectKind::Network).trigger.fetch_add(1, Relaxed);
+        }
         fx.get(EffectKind::Pitch).set(0, ((i / 50) % 13) as f32 - 6.0);
         let params =
             CoreParams { bypass: (300..320).contains(&i), mute: (400..410).contains(&i), ..Default::default() };
