@@ -310,7 +310,10 @@ Two effects, each a spec table like the others (so presets, randomize, CLI and G
 - **Mouse buttons** (middle, side 4/5) bind like keys. The global mouse hook is installed only
   while a binding uses a mouse button or one is being recorded (it would otherwise run on every
   mouse movement); each event is handled by exactly one path, chosen by the cursor position.
-- Limitation: hooks don't see keys while an app running as administrator is focused.
+- Limitation: hooks don't see keys while an app running as administrator is focused. Since
+  step 11 the app notices: a foreground WinEvent hook (no polling) compares the new foreground
+  process's integrity level with ours; above it (or token hidden), a toast says hotkeys won't
+  work there, once per app and session, and the Hotkeys section names the apps.
 
 ## 6. User interface
 
@@ -319,7 +322,8 @@ Done: single window, dark/light/system theme, device and level panels (step 1).
 mute, quick noise-suppression/gate toggles and volume; Advanced adds input gain, mic channel,
 preset management, every effect panel with ordering, and latency/performance details.
 Tray icon, close to tray and start hidden: done (step 6). Later: Test button, spectrum visualizer (FFT on the UI side from a ring copy, capped at the meter
-frame rate), launch on Windows startup (with the installer).
+frame rate) (done, step 7), launch on Windows startup (done, step 11). The window opens centred
+in the work area and shorter on small screens.
 
 ## 7. File processing (offline): **UI done (step 10)**
 
@@ -371,10 +375,28 @@ future Test button and the DSP test harness.
 - Unit tests for DSP, drift control (simulated drifting clocks, 2 min, ±0.05 %), config, and
   device-name detection. `examples/smoke.rs` drives the real engine headless against real devices.
 
-## 10. Packaging
+## 10. Packaging: **done (step 11)**
 
-As specified. Release profile: thin LTO, stripped, ~9 MB `.exe`, no console window. Installer
-should check for VB-CABLE and link to it, not bundle it.
+Release profile: thin LTO, stripped, ~12 MB `.exe`, no console window. Icon and version details
+are embedded (`build.rs`; the `.ico` is generated from the same drawing code as the tray icon,
+kept in sync by a test).
+
+- **Installer (Inno Setup 6, `installer/`):** per-user (no administrator prompt) to
+  `%LOCALAPPDATA%\Programs\Voice Changer`; Start menu entry, optional desktop shortcut and
+  "start with Windows", Apps & features entry with uninstaller. A running copy (often hidden in
+  the tray) is asked to quit through a named event and saves its settings first; the uninstaller
+  removes the startup entry and offers to delete settings (recordings are kept). VB-CABLE is not
+  bundled or checked by the installer: the app detects it by device name, which is more reliable
+  than guessing driver registry keys, and walks the user through setting it up.
+- **Releases:** tag `vX.Y.Z` to publish the installer and a portable zip; notes from
+  `.github/release-notes/<tag>.md`. CI builds the installer on every push and runs a silent
+  install, checks files, shortcut, startup entry and Apps & features, then uninstalls and checks
+  everything is gone (`installer/test-install.ps1`).
+- **Start with Windows:** an `HKCU\...\Run` value (the only record, shared with the installer;
+  Task Manager's Disabled mark counts as off). It launches with `--startup`: hidden in the tray,
+  and the voice resumes if it was on. A moved executable gets the entry repointed on next start.
+- **Unsigned for now** (user's choice for v0.1, for themselves and testers): SmartScreen shows
+  "More info → Run anyway". Options for later are below.
 
 - **CPU compatibility (done):** builds target baseline x86-64 so they run on any 64-bit PC; the
   pitch tracker's hot loop picks an AVX2 version at runtime (`src/dsp/simd.rs`). Output is
@@ -412,7 +434,9 @@ should check for VB-CABLE and link to it, not bundle it.
    hotkey), monitor tap point; preset loudness evened out; undo for Randomize and presets.
 10. ✅ File processing UI: batch with drag and drop, speed (pitch kept), MP3, record what the
    virtual mic sends; robotic voice and compression artifacts for the bad connection.
-11. Installer, signing, startup options, stretch features.
+11. ✅ Installer (per-user, upgrades close the running copy), start with Windows, admin-app
+   hotkey warning, embedded icon and version info, first release (v0.1.0, unsigned). Stretch
+   features moved after 1.0 (below).
 
 Steps 6–7 were moved ahead of 3A/3B: they make the app usable day to day, and the Test button
 is the quickest way to judge effect quality by ear.
