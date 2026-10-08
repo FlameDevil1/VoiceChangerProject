@@ -200,12 +200,28 @@ Causal TD-PSOLA (`src/dsp/pitch.rs`):
   real voices (inherent to PSOLA). Onsets take ~5–20 ms before the tracker locks. A future
   "quality" option could add a spectral-envelope (LPC) path for very large formant shifts.
 
-### 3A. Modulation sliders
+### 3A. Modulation sliders: **done (step 8)**
 
 As specified (value display, typed input, reset per slider, randomize with locks). Changes:
 - **Speed / time stretch is file-only.** Real-time speed-up is impossible (audio can't play
-  faster than it arrives) and slow-down accumulates delay without bound.
+  faster than it arrives) and slow-down accumulates delay without bound. Moved to step 10.
 - Every random effect uses a **seeded RNG** so presets and tests are reproducible.
+- **Pitch & formant** gains intonation (0 % flat ... 100 % natural ... 200 % sing-song, measured
+  against a 1.5 s running average of your pitch), vibrato (depth in cents, rate), and auto-tune
+  (strength, key, scale: chromatic/major/minor/pentatonic). All act per PSOLA grain, so they cost
+  nothing extra. The tracker's ~16 kHz period estimate is refined at 48 kHz (local search +
+  parabolic fit) so auto-tune lands within ~0.1 % of the note.
+- New **Voice character** effect (after Robot): tone tilt, warmth (250 Hz), presence (3.5 kHz),
+  nasality (1.1 kHz), breathiness (band-limited noise following the voice envelope), roughness
+  (irregular ~35 Hz flutter + soft saturation), doubling (copy on an 18 ms delay drifting
+  +/-1.5 ms). Every stage is skipped at 0, so neutral settings are bit-exact passthrough.
+- Dropdown parameters (key, scale) are declared in the spec (`choices`); the slider grid shows a
+  combo box for them.
+- **Randomize** per effect plus "Randomize voice" in Simple mode; ranges come from each spec's
+  `random` table (sensible, not full range). A lock toggle next to each randomizable control keeps
+  its value; locks persist in the config.
+- **Simple mode Fine-tune** (collapsed by default): Pitch, Formant, Tone, Breathiness,
+  Roughness and Randomize voice, without opening the effect panels.
 
 ### 3B. Bad mic & bad connection
 
@@ -329,7 +345,8 @@ should check for VB-CABLE and link to it, not bundle it.
    (before/after effects), mouse side/middle buttons as hotkeys (mouse hook only while needed),
    Help & diagnostics (open settings folder, copy diagnostics report, settings backup/restore),
    release workflow (tag `vX.Y.Z` to publish a zip).
-8. Modulation sliders (3A).
+8. ✅ Modulation sliders (3A): intonation, vibrato, auto-tune; Voice character effect;
+   dropdown parameters; randomize with locks; Simple-mode Fine-tune.
 9. Bad mic / bad connection (3B), scenario presets, monitor tap point.
 10. File processing UI (batch, MP3 export, record-with-effects).
 11. Installer, signing, startup options, stretch features.

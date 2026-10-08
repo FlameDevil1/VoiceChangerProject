@@ -1,11 +1,47 @@
 //! Effect panels, generated from each effect's spec table.
 
-use super::widgets::{AMBER, arrow_button, slider_row};
+use super::widgets::{AMBER, arrow_button, choice_cells, lock_toggle, slider_cells, slider_row};
 use eframe::egui::{self, RichText};
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering::Relaxed;
 use voice_changer::dsp::fx::denoise::STATUS_UNSUPPORTED_RATE;
 use voice_changer::dsp::params::EffectParams;
+use voice_changer::dsp::util::Rng;
 use voice_changer::dsp::{EffectKind, FxSettings};
+
+/// What the Randomize buttons need: a generator and the controls the user locked.
+pub struct Dice<'a> {
+    pub rng: &'a mut Rng,
+    pub locks: &'a mut BTreeSet<String>,
+}
+
+impl Dice<'_> {
+    pub fn roll(&mut self, fx: &mut FxSettings, kind: EffectKind) {
+        let locks = &*self.locks;
+        fx.randomize(kind, self.rng, |key| locks.contains(&lock_key(kind, key)));
+    }
+
+    /// Lock toggle cell for `kind`/`key` if Randomize may change it (an empty cell otherwise).
+    pub fn lock_cell(&mut self, ui: &mut egui::Ui, kind: EffectKind, key: &str) {
+        if !kind.spec().random.iter().any(|(k, ..)| *k == key) {
+            ui.label("");
+            return;
+        }
+        let id = lock_key(kind, key);
+        let mut locked = self.locks.contains(&id);
+        if lock_toggle(ui, &mut locked) {
+            if locked {
+                self.locks.insert(id);
+            } else {
+                self.locks.remove(&id);
+            }
+        }
+    }
+}
+
+pub fn lock_key(kind: EffectKind, key: &str) -> String {
+    format!("{}.{key}", kind.key())
+}
 
 /// Reorder request from a panel header.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -23,6 +59,7 @@ pub fn effect_panel(
     live: &EffectParams,
     active: bool,
     reorder: Option<(bool, bool)>,
+    dice: &mut Dice,
 ) -> Option<Move> {
     let spec = kind.spec();
     let id = ui.make_persistent_id(("effect", kind.key()));
@@ -65,10 +102,10 @@ pub fn effect_panel(
             if unsupported {
                 ui.colored_label(
                     AMBER,
-                    "Your microphone runs at a rate other than 48 kHz. Set it to 48 kHz in Windows Sound settings → Recording → Properties → Advanced.",
+                    "Your microphone runs at a rate other than 48 kHz. Set it to 48 kHz in Windows Sound settings > Recording > Properties > Advanced.",
                 );
             }
-            if !spec.presets.is_empty() {
+            if !spec.presets.is_empty() || !spec.random.is_empty() {
                 ui.horizontal_wrapped(|ui| {
                     for (name, values) in spec.presets {
                         if ui.small_button(*name).clicked() {
@@ -78,17 +115,31 @@ pub fn effect_panel(
                             fx.set_enabled(kind, true);
                         }
                     }
+                    if !spec.random.is_empty()
+                        && ui
+                            .small_button("🎲 Randomize")
+                            .on_hover_text("Random values for the controls with a lock icon (locked ones stay)")
+                            .clicked()
+                    {
+                        dice.roll(fx, kind);
+                    }
                 });
             }
             let mut moved = false;
-            egui::Grid::new(("fx-grid", kind.key())).num_columns(3).spacing([8.0, 6.0]).show(ui, |ui| {
+            egui::Grid::new(("fx-grid", kind.key())).num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
                 for p in spec.params {
                     let mut v = fx.get(kind, p.key);
-                    let r = slider_row(ui, p.label, &mut v, p.min..=p.max, p.unit, p.step as f64, p.default).on_hover_text(p.help);
-                    if r.changed() {
+                    let r = match spec.choices_for(p.key) {
+                        Some(options) => choice_cells(ui, p.label, &mut v, options, p.default),
+                        None => slider_cells(ui, p.label, &mut v, p.min..=p.max, p.unit, p.step as f64, p.default),
+                    };
+                    r.on_hover_text(p.help);
+                    if v != fx.get(kind, p.key) {
                         fx.set(kind, p.key, v);
                         moved = true;
                     }
+                    dice.lock_cell(ui, kind, p.key);
+                    ui.end_row();
                 }
                 let mut pct = fx.mix(kind) * 100.0;
                 if slider_row(ui, spec.mix_label, &mut pct, 0.0..=100.0, " %", 1.0, spec.default_mix * 100.0).changed() {

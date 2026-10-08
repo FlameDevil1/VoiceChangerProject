@@ -8,6 +8,7 @@
 
 mod calibrate_ui;
 mod effects;
+mod fine_tune;
 mod help;
 pub mod icon;
 mod presets;
@@ -63,6 +64,8 @@ pub struct App {
     /// Newer release found by the startup check (filled in by a background thread).
     update: Arc<std::sync::Mutex<Option<voice_changer::updates::Update>>>,
     update_dismissed: bool,
+    /// For the Randomize buttons.
+    rng: voice_changer::dsp::util::Rng,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -121,6 +124,9 @@ impl App {
             silent_for: 0.0,
             update: Arc::default(),
             update_dismissed: false,
+            rng: voice_changer::dsp::util::Rng::new(
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64),
+            ),
             _instance: instance,
         };
         if check_updates {
@@ -576,6 +582,8 @@ impl App {
         let mut fx = self.cfg.fx.clone();
         let shared = self.engine.shared.clone();
         let active = self.is_active();
+        let mut locks = self.cfg.locked.clone();
+        let mut dice = effects::Dice { rng: &mut self.rng, locks: &mut locks };
         section(ui, "Effects", |ui| {
             ui.label(
                 RichText::new(
@@ -588,7 +596,9 @@ impl App {
             let n = order.len();
             for (i, kind) in order.into_iter().enumerate() {
                 let reorder = Some((i > 0, i + 1 < n));
-                if let Some(m) = effects::effect_panel(ui, kind, &mut fx, shared.fx.get(kind), active, reorder) {
+                if let Some(m) =
+                    effects::effect_panel(ui, kind, &mut fx, shared.fx.get(kind), active, reorder, &mut dice)
+                {
                     let j = if m == effects::Move::Up { i - 1 } else { i + 1 };
                     fx.order.swap(i, j);
                 }
@@ -597,6 +607,15 @@ impl App {
                 fx.order = EffectKind::ALL.to_vec();
             }
         });
+        self.apply_fx_edit(fx, locks);
+    }
+
+    /// Apply edits from an effects UI: new settings and lock set (each only if changed).
+    fn apply_fx_edit(&mut self, fx: FxSettings, locks: std::collections::BTreeSet<String>) {
+        if locks != self.cfg.locked {
+            self.cfg.locked = locks;
+            self.mark_dirty();
+        }
         if fx != self.cfg.fx {
             self.set_fx(fx);
         }
@@ -734,6 +753,7 @@ impl eframe::App for App {
                     self.help_section(ui);
                 } else {
                     self.preset_grid(ui);
+                    self.fine_tune(ui);
                     self.controls_section(ui, false);
                 }
                 ui.add_space(4.0);

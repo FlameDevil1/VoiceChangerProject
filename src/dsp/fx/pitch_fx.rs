@@ -109,8 +109,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     presets: &[
         ("Deeper", &[("semitones", -4.0), ("formant", -2.0)]),
         ("Higher", &[("semitones", 4.0), ("formant", 2.0)]),
-        ("Male → female", &[("semitones", 6.0), ("formant", 3.0)]),
-        ("Female → male", &[("semitones", -6.0), ("formant", -3.0)]),
+        ("Male to female", &[("semitones", 6.0), ("formant", 3.0)]),
+        ("Female to male", &[("semitones", -6.0), ("formant", -3.0)]),
         ("Child", &[("semitones", 8.0), ("formant", 5.0)]),
         ("Monster", &[("semitones", -12.0), ("formant", -6.0)]),
         ("Chipmunk", &[("semitones", 8.0), ("formant", 8.0)]),

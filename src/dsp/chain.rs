@@ -15,7 +15,7 @@
 use super::Processor;
 use super::fx;
 use super::params::{EffectParams, EffectSettings, EffectSpec};
-use super::util::{DelayLine, SmoothedValue};
+use super::util::{DelayLine, Rng, SmoothedValue};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -167,6 +167,22 @@ impl FxSettings {
         let Some(p) = kind.spec().params.iter().find(|p| p.key == key) else { return false };
         self.effects.entry(kind).or_default().params.insert(key.to_string(), p.clamp(value));
         true
+    }
+
+    /// Pick new values for the effect's randomizable controls (its spec's `random` ranges,
+    /// rounded to the slider step) and turn it on. Controls for which `locked` returns true
+    /// keep their value.
+    pub fn randomize(&mut self, kind: EffectKind, rng: &mut Rng, locked: impl Fn(&str) -> bool) {
+        let spec = kind.spec();
+        for (key, lo, hi) in spec.random {
+            if locked(key) {
+                continue;
+            }
+            let step = spec.index(key).map_or(0.0, |i| spec.params[i].step);
+            let v = lo + (hi - lo) * rng.next_f32();
+            self.set(kind, key, if step > 0.0 { (v / step).round() * step } else { v });
+        }
+        self.set_enabled(kind, true);
     }
 
     /// Make `order` contain every effect exactly once. Effects missing from an older config are
@@ -458,6 +474,29 @@ mod tests {
         let pos = |k| s.order.iter().position(|x| *x == k).unwrap();
         assert!(pos(EffectKind::Reverb) < pos(EffectKind::Pitch));
         assert_eq!(pos(EffectKind::Robot), pos(EffectKind::Pitch) + 1);
+    }
+
+    #[test]
+    fn randomize_stays_in_range_and_respects_locks() {
+        let mut rng = Rng::new(7);
+        for kind in EffectKind::ALL {
+            for (key, lo, hi) in kind.spec().random {
+                assert!(kind.spec().index(key).is_some(), "{kind:?} random key {key}");
+                let p = kind.spec().params[kind.spec().index(key).unwrap()];
+                assert!(p.min <= *lo && hi <= &p.max && lo < hi, "{kind:?} random range {key}");
+            }
+        }
+        let mut s = FxSettings::default().with(EffectKind::Pitch, &[("formant", 1.5)]);
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..20 {
+            s.randomize(EffectKind::Pitch, &mut rng, |k| k == "formant");
+            let st = s.get(EffectKind::Pitch, "semitones");
+            assert!((-6.0..=6.0).contains(&st) && st.fract() == 0.0, "{st}");
+            assert_eq!(s.get(EffectKind::Pitch, "formant"), 1.5);
+            seen.insert(st as i32);
+        }
+        assert!(s.enabled(EffectKind::Pitch));
+        assert!(seen.len() > 4, "not very random: {seen:?}");
     }
 
     #[test]

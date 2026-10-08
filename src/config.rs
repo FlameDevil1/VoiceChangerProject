@@ -3,6 +3,7 @@
 use crate::dsp::FxSettings;
 use crate::hotkeys::HotkeyConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 pub const CONFIG_VERSION: u32 = 1;
@@ -100,6 +101,8 @@ pub struct Config {
     pub ui_scale: f32,
     /// Ask GitHub for a newer release at startup.
     pub check_updates: bool,
+    /// Controls the Randomize buttons leave alone, as "effect.param" (e.g. "pitch.semitones").
+    pub locked: BTreeSet<String>,
 }
 
 impl Default for Config {
@@ -128,6 +131,7 @@ impl Default for Config {
             show_spectrum: true,
             ui_scale: 1.0,
             check_updates: true,
+            locked: BTreeSet::new(),
         }
     }
 }

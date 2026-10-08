@@ -95,14 +95,67 @@ pub fn slider_row(
     step: f64,
     default: f32,
 ) -> egui::Response {
+    let r = slider_cells(ui, label, value, range, suffix, step, default);
+    ui.end_row();
+    r
+}
+
+/// The label, slider and reset button of a grid row, leaving the row open for more cells.
+pub fn slider_cells(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &str,
+    step: f64,
+    default: f32,
+) -> egui::Response {
     ui.label(label);
-    let mut r = ui.add(egui::Slider::new(value, range).suffix(suffix).step_by(step).max_decimals(1));
+    let decimals = if step >= 1.0 { 0 } else { 1 };
+    let r = ui.add(egui::Slider::new(value, range).suffix(suffix).step_by(step).max_decimals(decimals));
+    reset_button(ui, value, default, r)
+}
+
+/// Label, dropdown and reset button for a parameter stored as an option index.
+pub fn choice_cells(ui: &mut egui::Ui, label: &str, value: &mut f32, options: &[&str], default: f32) -> egui::Response {
+    ui.label(label);
+    let mut index = (value.round().max(0.0) as usize).min(options.len().saturating_sub(1));
+    let mut r = egui::ComboBox::from_id_salt(("choice", label))
+        .selected_text(options.get(index).copied().unwrap_or(""))
+        .show_ui(ui, |ui| {
+            for (i, name) in options.iter().enumerate() {
+                ui.selectable_value(&mut index, i, *name);
+            }
+        })
+        .response;
+    if index as f32 != value.round() {
+        *value = index as f32;
+        r.mark_changed();
+    }
+    reset_button(ui, value, default, r)
+}
+
+fn reset_button(ui: &mut egui::Ui, value: &mut f32, default: f32, mut r: egui::Response) -> egui::Response {
     if ui.add_enabled(*value != default, egui::Button::new("⟲")).on_hover_text("Reset").clicked() {
         *value = default;
         r.mark_changed();
     }
-    ui.end_row();
     r
+}
+
+/// Lock toggle for a control the Randomize buttons may change. Returns true when toggled.
+pub fn lock_toggle(ui: &mut egui::Ui, locked: &mut bool) -> bool {
+    let tip = if *locked {
+        "Locked: Randomize keeps this value. Click to unlock."
+    } else {
+        "Click to lock: Randomize will keep this value."
+    };
+    let text = if *locked { RichText::new("🔒") } else { RichText::new("🔓").weak() };
+    let r = ui.selectable_label(*locked, text).on_hover_text(tip);
+    if r.clicked() {
+        *locked = !*locked;
+    }
+    r.clicked()
 }
 
 /// Gain slider in dB with a reset button. Returns true on change.

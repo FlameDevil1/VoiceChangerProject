@@ -33,8 +33,10 @@ The binary is `target/release/voicechanger.exe`.
 3. Press **Start**.
 4. In Discord/OBS/your game, select **CABLE Output** as the microphone.
 5. Optional: tick **Hear myself** to monitor through your headphones.
-6. Pick a voice in **Simple** mode, or switch to **Advanced** to tweak effects and save your
-   own presets (stored in `%APPDATA%\VoiceChanger\presets`, shareable via Export/Import).
+6. Pick a voice in **Simple** mode and adjust it under **Fine-tune** (or roll the dice with
+   **Randomize voice**; lock the sliders you want to keep). Switch to **Advanced** for every
+   effect (auto-tune, vibrato, voice character, ...) and to save your own presets (stored in
+   `%APPDATA%\VoiceChanger\presets`, shareable via Export/Import).
 7. Hotkeys work while gaming: **Ctrl+Alt+V** effects on/off, **Ctrl+Alt+Page Down/Up** next or
    previous preset, **Ctrl+Alt+N** normal voice, **Ctrl+Alt+M** mute. Change them, or add a
    hold-to-use key, under Advanced → Hotkeys & tray. Closing the window keeps it in the tray.
