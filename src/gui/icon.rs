@@ -1,4 +1,6 @@
-//! The app icon, drawn in code (no image files to ship): a rounded square with a microphone.
+//! The app icon, drawn in code: a rounded square with a microphone. The window and tray draw it
+//! at runtime; `assets/voicechanger.ico` (embedded in the .exe, used by the installer) is generated
+//! from the same code and a test keeps the two in sync.
 
 /// RGBA pixels of a `size` x `size` icon.
 pub fn rgba(size: u32) -> Vec<u8> {
@@ -24,6 +26,52 @@ pub fn rgba(size: u32) -> Vec<u8> {
             out.extend_from_slice(&[r as u8, g as u8, b as u8, (bg * 255.0) as u8]);
         }
     }
+    out
+}
+
+/// Sizes in the .ico: small icons, Start menu and taskbar at 100–250 % scaling, Explorer views.
+#[cfg(test)]
+const ICO_SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
+
+/// A Windows .ico with every size in `ICO_SIZES` (32-bit BGRA bitmaps with alpha).
+#[cfg(test)]
+fn ico() -> Vec<u8> {
+    let images: Vec<Vec<u8>> = ICO_SIZES.iter().map(|&n| ico_bitmap(n)).collect();
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0, 0, 1, 0]); // reserved, type 1 = icon
+    out.extend_from_slice(&(ICO_SIZES.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * ICO_SIZES.len();
+    for (&n, img) in ICO_SIZES.iter().zip(&images) {
+        let dim = if n >= 256 { 0 } else { n as u8 }; // 0 means 256
+        out.extend_from_slice(&[dim, dim, 0, 0]);
+        out.extend_from_slice(&1u16.to_le_bytes()); // planes
+        out.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        out.extend_from_slice(&(img.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += img.len();
+    }
+    images.iter().for_each(|img| out.extend_from_slice(img));
+    out
+}
+
+/// One .ico entry: BITMAPINFOHEADER, bottom-up BGRA rows, then an all-zero AND mask.
+#[cfg(test)]
+fn ico_bitmap(n: u32) -> Vec<u8> {
+    let px = rgba(n);
+    let mask_row = n.div_ceil(32) * 4;
+    let mut out = Vec::new();
+    for v in [40, n, 2 * n] {
+        out.extend_from_slice(&v.to_le_bytes()); // header size, width, height (image + mask)
+    }
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    out.extend_from_slice(&[0; 24]); // no compression, default sizes and palette
+    for row in px.chunks_exact(n as usize * 4).rev() {
+        for p in row.as_chunks::<4>().0 {
+            out.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+        }
+    }
+    out.resize(out.len() + (mask_row * n) as usize, 0);
     out
 }
 
@@ -57,5 +105,19 @@ mod tests {
         assert_eq!(px[3], 0, "corner is transparent");
         let mid = ((16 * 32 + 16) * 4) as usize;
         assert_eq!(px[mid + 3], 255, "centre is opaque");
+    }
+
+    /// The .ico shipped in `assets/` matches the drawing. After changing the icon, regenerate it
+    /// with `VC_UPDATE_GOLDEN=1 cargo test --bin voicechanger icon`.
+    #[test]
+    fn ico_file_is_up_to_date() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/voicechanger.ico");
+        let ico = super::ico();
+        if std::env::var_os("VC_UPDATE_GOLDEN").is_some() {
+            std::fs::write(path, &ico).unwrap();
+        }
+        assert_eq!(&ico[..6], &[0, 0, 1, 0, 8, 0]);
+        let shipped = std::fs::read(path).expect("assets/voicechanger.ico is missing");
+        assert!(shipped == ico, "assets/voicechanger.ico is out of date with icon.rs (see the test's docs)");
     }
 }
