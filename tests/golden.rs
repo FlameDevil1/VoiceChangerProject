@@ -119,6 +119,15 @@ fn cases() -> Vec<Case> {
             params: unity,
             fx: fx(EffectKind::Robot, &[]),
         },
+        Case {
+            name: "character_old_vowel",
+            input: || signals::vowel_glide(RATE, 0.6, 120.0, 160.0),
+            params: unity,
+            fx: fx(
+                EffectKind::Character,
+                &[("tone", -30.0), ("nasal", 40.0), ("breath", 30.0), ("rough", 40.0), ("double", 30.0)],
+            ),
+        },
         Case { name: "radio_phrase", input: phrase, params: unity, fx: fx(EffectKind::Radio, &[("noise", 30.0)]) },
         Case { name: "denoise_noisy_vowel", input: noisy_vowel, params: unity, fx: fx(EffectKind::Denoise, &[]) },
     ]

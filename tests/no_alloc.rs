@@ -47,7 +47,8 @@ fn audio_path_never_allocates() {
     let rate = 48_000.0;
     let mut settings = FxSettings::default()
         .with(EffectKind::Pitch, &[("semitones", -4.0), ("formant", -2.0)])
-        .with(EffectKind::Reverb, &[("decay", 2.0)]);
+        .with(EffectKind::Reverb, &[("decay", 2.0)])
+        .with(EffectKind::Character, &[("nasal", 30.0), ("breath", 40.0), ("rough", 40.0), ("double", 40.0)]);
     for kind in EffectKind::ALL {
         settings.set_enabled(kind, true);
     }

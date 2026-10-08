@@ -28,6 +28,7 @@ pub enum EffectKind {
     Gate,
     Pitch,
     Robot,
+    Character,
     Eq,
     Compressor,
     Reverb,
@@ -38,11 +39,12 @@ impl EffectKind {
     /// Every effect, in the default processing order: clean up the input first (noise removal
     /// before the gate, so the gate sees a clean signal), then change the voice, shape its tone
     /// and level, and finally place it in a space or through a "device".
-    pub const ALL: [EffectKind; 8] = [
+    pub const ALL: [EffectKind; 9] = [
         EffectKind::Denoise,
         EffectKind::Gate,
         EffectKind::Pitch,
         EffectKind::Robot,
+        EffectKind::Character,
         EffectKind::Eq,
         EffectKind::Compressor,
         EffectKind::Reverb,
@@ -55,6 +57,7 @@ impl EffectKind {
             EffectKind::Gate => &fx::gate::SPEC,
             EffectKind::Pitch => &fx::pitch_fx::SPEC,
             EffectKind::Robot => &fx::robot::SPEC,
+            EffectKind::Character => &fx::character::SPEC,
             EffectKind::Eq => &fx::eq::SPEC,
             EffectKind::Compressor => &fx::compressor::SPEC,
             EffectKind::Reverb => &fx::reverb::SPEC,
@@ -73,6 +76,7 @@ impl EffectKind {
             EffectKind::Gate => "gate",
             EffectKind::Pitch => "pitch",
             EffectKind::Robot => "robot",
+            EffectKind::Character => "character",
             EffectKind::Eq => "eq",
             EffectKind::Compressor => "compressor",
             EffectKind::Reverb => "reverb",
@@ -94,6 +98,7 @@ impl EffectKind {
             EffectKind::Gate => Box::new(fx::gate::Gate::new(params)),
             EffectKind::Pitch => Box::new(fx::pitch_fx::PitchFx::new(params)),
             EffectKind::Robot => Box::new(fx::robot::Robot::new(params)),
+            EffectKind::Character => Box::new(fx::character::Character::new(params)),
             EffectKind::Eq => Box::new(fx::eq::Eq::new(params)),
             EffectKind::Compressor => Box::new(fx::compressor::Compressor::new(params)),
             EffectKind::Reverb => Box::new(fx::reverb::Reverb::new(params)),

@@ -4,6 +4,7 @@
 //! Everything that changes over time is computed per sample from absolute sample counts, so the
 //! output never depends on how audio is split into blocks.
 
+pub mod character;
 pub mod compressor;
 pub mod denoise;
 pub mod eq;
