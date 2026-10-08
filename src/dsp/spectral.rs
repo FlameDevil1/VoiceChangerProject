@@ -19,6 +19,7 @@ use std::f32::consts::PI;
 pub const FRAME: usize = 512;
 pub const HOP: usize = FRAME / 2;
 const BINS: usize = FRAME / 2 + 1;
+const SEED: u64 = 0x5EC7_0C0D;
 
 pub struct SpectralCodec {
     sr: f32,
@@ -57,7 +58,7 @@ impl SpectralCodec {
             re: vec![0.0; FRAME],
             im: vec![0.0; FRAME],
             bands,
-            rng: Rng::new(0xC0DE_C5),
+            rng: Rng::new(SEED),
         }
     }
 
@@ -65,7 +66,7 @@ impl SpectralCodec {
         self.input.iter_mut().chain(self.acc.iter_mut()).chain(self.ready.iter_mut()).for_each(|v| *v = 0.0);
         self.in_pos = 0;
         self.hop_pos = 0;
-        self.rng = Rng::new(0xC0DE_C5);
+        self.rng = Rng::new(SEED);
     }
 
     /// Feed one sample, get one sample `FRAME` samples late. `active = false` only records input
