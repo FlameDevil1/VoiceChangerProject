@@ -57,6 +57,7 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 0.25,
+    send_mix: true,
     choices: &[],
     random: &[],
     presets: &[

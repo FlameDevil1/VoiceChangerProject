@@ -63,6 +63,7 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    send_mix: false,
     choices: &[],
     random: &[],
     presets: &[
@@ -115,13 +116,16 @@ impl Processor for Robot {
         self.psola.process(buf);
 
         let ring = p.get(RING) / 100.0;
+        // Ring modulation by a sine halves the power at full depth; restore the average level
+        // (mean of (1 - r + r sin)^2 is (1 - r)^2 + r^2 / 2) so turning it up doesn't go quiet.
+        let ring_gain = 1.0 / ((1.0 - ring).powi(2) + 0.5 * ring * ring).sqrt();
         let inc = std::f64::consts::TAU * p.get(RING_HZ) as f64 / self.sr as f64;
         let g = 0.75 * p.get(METALLIC) / 100.0;
         let d = ((self.sr / hz).round() as usize).clamp(1, self.mask);
         for s in buf.iter_mut() {
             let mut y = *s;
             if ring > 0.0 {
-                y *= 1.0 - ring + ring * self.phase.sin() as f32;
+                y *= (1.0 - ring + ring * self.phase.sin() as f32) * ring_gain;
             }
             self.phase = (self.phase + inc) % std::f64::consts::TAU;
             let c = y + g * self.comb[self.pos.wrapping_sub(d) & self.mask];

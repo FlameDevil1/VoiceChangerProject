@@ -38,6 +38,11 @@ pub struct EffectSpec {
     /// What the wet/dry control is called for this effect ("Mix", "Strength", ...).
     pub mix_label: &'static str,
     pub default_mix: f32,
+    /// Mix law. `false`: crossfade (dry + (wet - dry) * mix), right when the wet signal replaces
+    /// the voice (pitch, robot...). `true`: the dry voice stays at full level up to 50 % and the
+    /// wet signal fades in on top, right for effects that add to the voice (reverb), where a
+    /// crossfade would make the voice quieter.
+    pub send_mix: bool,
     pub presets: &'static [Preset],
     /// Parameters shown as a dropdown: (key, option labels); the value is the option index.
     pub choices: &'static [(&'static str, &'static [&'static str])],

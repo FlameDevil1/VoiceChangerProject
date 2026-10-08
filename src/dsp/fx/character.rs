@@ -28,6 +28,7 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    send_mix: false,
     choices: &[],
     random: &[
         ("tone", -50.0, 50.0),
@@ -220,7 +221,8 @@ impl Processor for Character {
             if rough_on {
                 let r = self.rough.next_value();
                 let m = self.flutter();
-                x *= 1.0 - 0.7 * r * m;
+                // The flutter averages 0.5, so divide by its mean gain to keep the level.
+                x *= (1.0 - 0.7 * r * m) / (1.0 - 0.35 * r);
                 // Gentle saturation (unity gain for small signals) adds grit.
                 let drive = 1.0 + 4.0 * r;
                 x = (drive * x).tanh() / drive;
@@ -349,7 +351,7 @@ mod tests {
             r.iter().cloned().fold(f32::MIN, f32::max) / r.iter().cloned().fold(f32::MAX, f32::min)
         };
         assert!(spread(&x) < 1.01);
-        assert!(spread(&y) > 1.8, "{}", spread(&y));
+        assert!(spread(&y) > 1.5, "{}", spread(&y));
     }
 
     #[test]

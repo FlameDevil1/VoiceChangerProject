@@ -147,7 +147,7 @@ pub fn builtins() -> Vec<Preset> {
             "Big, polished stadium voice",
             none()
                 .with(Eq, &[("low", 2.0), ("high_mid", 2.0)])
-                .with(Compressor, &[("threshold", -24.0), ("ratio", 4.0), ("attack", 3.0), ("makeup", 6.0)])
+                .with(Compressor, &[("threshold", -24.0), ("ratio", 4.0), ("attack", 3.0), ("makeup", 8.0)])
                 .with(Reverb, &[("size", 75.0), ("decay", 2.8), ("predelay", 25.0)])
                 .with_mix(Reverb, 0.2),
         ),
@@ -156,7 +156,32 @@ pub fn builtins() -> Vec<Preset> {
             "Clear, even broadcast voice",
             none()
                 .with(Eq, &[("low", -3.0), ("low_mid", -2.0), ("high_mid", 3.0), ("high", 1.0)])
-                .with(Compressor, &[("threshold", -24.0), ("ratio", 4.0), ("attack", 3.0), ("makeup", 6.0)]),
+                .with(Compressor, &[("threshold", -24.0), ("ratio", 4.0), ("attack", 3.0), ("makeup", 9.0)]),
+        ),
+        builtin(
+            "Old man",
+            "Shaky, weathered voice",
+            none()
+                .with(Pitch, &[("semitones", -2.0), ("formant", -1.0), ("vibrato", 18.0), ("vibrato_rate", 6.5)])
+                .with(Character, &[("tone", -25.0), ("breath", 30.0), ("rough", 45.0)]),
+        ),
+        builtin(
+            "Ghost",
+            "Breathy, doubled and distant",
+            none()
+                .with(Pitch, &[("semitones", 1.0), ("intonation", 60.0)])
+                .with(Character, &[("tone", 20.0), ("breath", 70.0), ("double", 60.0), ("presence", -30.0)])
+                .with(Reverb, &[("size", 75.0), ("decay", 2.8), ("damping", 40.0), ("predelay", 25.0)])
+                .with_mix(Reverb, 0.35),
+        ),
+        builtin(
+            "Auto-tune",
+            "Hard pitch correction, pop style",
+            none()
+                .with(Pitch, &[("autotune", 100.0)])
+                .with(Compressor, &[("threshold", -18.0), ("ratio", 2.0), ("makeup", 2.0)])
+                .with(Reverb, &[("size", 25.0), ("decay", 0.6), ("damping", 60.0), ("predelay", 5.0)])
+                .with_mix(Reverb, 0.15),
         ),
     ]
 }
@@ -391,6 +416,27 @@ mod tests {
             }
             let y = offline::render(&x, 48_000, CoreParams::default(), &p.fx, 480);
             assert!(y.iter().all(|s| s.is_finite()) && analysis::peak(&y) <= 0.9, "{}", p.name);
+        }
+    }
+
+    /// Clicking through voices and effect presets shouldn't make you suddenly loud or quiet.
+    #[test]
+    fn presets_keep_roughly_the_same_loudness() {
+        let mut x = signals::vowel_wobble(48_000, 1.5, 140.0, 0.15, 2.0);
+        x.extend(signals::silence(48_000, 0.3));
+        x.extend(signals::vowel_wobble(48_000, 1.0, 180.0, 0.1, 3.0).iter().map(|s| s * 0.5));
+        let change = |fx: &FxSettings| {
+            analysis::rms_db(&offline::render(&x, 48_000, CoreParams::default(), fx, 480)) - analysis::rms_db(&x)
+        };
+        for p in builtins() {
+            let d = change(&p.fx);
+            assert!(d.abs() < 3.0, "voice {}: {d:+.1} dB", p.name);
+        }
+        for kind in EffectKind::ALL {
+            for (name, values) in kind.spec().presets {
+                let d = change(&FxSettings::default().with(kind, values));
+                assert!(d.abs() < 3.0, "{} preset {name}: {d:+.1} dB", kind.key());
+            }
         }
     }
 

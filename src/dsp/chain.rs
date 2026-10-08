@@ -311,10 +311,17 @@ impl Slot {
 
         let fully_wet = self.mix.is_settled() && self.mix.current() == 1.0;
         let fully_on = self.enable.is_settled() && self.enable.current() == 1.0;
+        let send = self.kind.spec().send_mix;
         for (y, &x) in buf.iter_mut().zip(input.iter()) {
             let dry = self.dry_delay.process(x);
             let m = self.mix.next_value();
-            let wet = if fully_wet { *y } else { dry + (*y - dry) * m };
+            let wet = if fully_wet {
+                *y
+            } else if send {
+                dry * (2.0 - 2.0 * m).min(1.0) + *y * (2.0 * m).min(1.0)
+            } else {
+                dry + (*y - dry) * m
+            };
             let e = self.enable.next_value();
             *y = if fully_on { wet } else { x + (wet - x) * e };
         }

@@ -104,6 +104,7 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    send_mix: false,
     choices: &[("key", &NOTE_NAMES), ("scale", Scale::LABELS)],
     random: &[("semitones", -6.0, 6.0), ("formant", -4.0, 4.0), ("intonation", 60.0, 140.0)],
     presets: &[
