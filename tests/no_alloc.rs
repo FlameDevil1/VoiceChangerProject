@@ -91,6 +91,7 @@ fn audio_path_never_allocates() {
     let noise = signals::brown_noise(48_000, 6.0, 0.05, 1);
     input.iter_mut().zip(&noise).for_each(|(a, b)| *a += b);
     let mut buf = vec![0.0f32; 480];
+    let mut monitor = vec![0.0f32; 480];
     let mut retired = Vec::with_capacity(4);
     // What the engine does in each capture thread's first callback.
     voice_changer::dsp::fx::denoise::warm_up_thread();
@@ -116,7 +117,12 @@ fn audio_path_never_allocates() {
         {
             retired.push(old); // capacity reserved above: no allocation
         }
-        core.process(&mut buf[..n], params);
+        // Alternate between the plain path and the split "hear myself" path.
+        if i % 2 == 0 {
+            core.process(&mut buf[..n], params);
+        } else {
+            core.process_with_monitor(&mut buf[..n], &mut monitor[..n], params);
+        }
         if let Some(old) = core.take_retired() {
             retired.push(old);
         }

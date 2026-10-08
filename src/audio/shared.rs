@@ -78,6 +78,8 @@ pub struct Shared {
     pub bypass: AtomicBool,
     pub mute: AtomicBool,
     pub monitor_enabled: AtomicBool,
+    /// "Hear myself" skips the bad connection effect (no lagged self-monitoring).
+    pub monitor_pre: AtomicBool,
     pub input_gain: AtomicF32,
     pub output_gain: AtomicF32,
     /// -1 = average all channels, otherwise channel index.
@@ -111,6 +113,7 @@ impl Default for Shared {
             bypass: AtomicBool::new(false),
             mute: AtomicBool::new(false),
             monitor_enabled: AtomicBool::new(false),
+            monitor_pre: AtomicBool::new(true),
             input_gain: AtomicF32::new(1.0),
             output_gain: AtomicF32::new(1.0),
             input_channel: AtomicI32::new(-1),

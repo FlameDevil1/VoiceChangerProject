@@ -381,6 +381,20 @@ impl Chain {
         }
     }
 
+    /// Like `process`, also copying the signal into `tap` just before the bad connection
+    /// effect. Returns false (and leaves `tap` alone) if that effect is off.
+    pub fn process_tapped(&mut self, buf: &mut [f32], tap: &mut [f32]) -> bool {
+        let mut tapped = false;
+        for slot in &mut self.slots {
+            if !tapped && slot.kind == EffectKind::Network && (slot.params.slot.enabled() || !slot.is_off()) {
+                tap.copy_from_slice(buf);
+                tapped = true;
+            }
+            slot.process(buf);
+        }
+        tapped
+    }
+
     /// Current latency: sum over slots that are on.
     pub fn latency(&self) -> usize {
         self.slots.iter().map(|s| s.latency()).sum()

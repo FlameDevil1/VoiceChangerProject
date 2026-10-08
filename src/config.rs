@@ -103,6 +103,8 @@ pub struct Config {
     pub check_updates: bool,
     /// Controls the Randomize buttons leave alone, as "effect.param" (e.g. "pitch.semitones").
     pub locked: BTreeSet<String>,
+    /// "Hear myself" skips the bad connection effect, so you never hear your own voice lagging.
+    pub monitor_skip_lag: bool,
 }
 
 impl Default for Config {
@@ -132,6 +134,7 @@ impl Default for Config {
             ui_scale: 1.0,
             check_updates: true,
             locked: BTreeSet::new(),
+            monitor_skip_lag: true,
         }
     }
 }

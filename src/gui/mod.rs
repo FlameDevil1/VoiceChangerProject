@@ -86,6 +86,7 @@ impl App {
         shared.input_gain.store(db_to_gain(cfg.input_gain_db));
         shared.output_gain.store(db_to_gain(cfg.output_gain_db));
         shared.monitor_enabled.store(cfg.monitor_enabled, Relaxed);
+        shared.monitor_pre.store(cfg.monitor_skip_lag, Relaxed);
         shared.input_channel.store(cfg.input_channel.map_or(-1, |c| c as i32), Relaxed);
         shared.set_margin(cfg.latency.margin_seconds());
         shared.fx.store(&cfg.fx);

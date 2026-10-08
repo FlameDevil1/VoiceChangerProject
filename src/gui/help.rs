@@ -88,6 +88,7 @@ impl App {
         sh.input_gain.store(voice_changer::dsp::db_to_gain(self.cfg.input_gain_db));
         sh.output_gain.store(voice_changer::dsp::db_to_gain(self.cfg.output_gain_db));
         sh.input_channel.store(self.cfg.input_channel.map_or(-1, |c| c as i32), Relaxed);
+        sh.monitor_pre.store(self.cfg.monitor_skip_lag, Relaxed);
         sh.set_margin(self.cfg.latency.margin_seconds());
         sh.fx.store(&self.cfg.fx);
         if self.cfg.fx.order != old.fx.order {

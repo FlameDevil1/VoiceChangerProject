@@ -373,6 +373,7 @@ impl Controller {
                 Chain::build(&self.settings.chain_order, &self.shared.fx, engine_rate as f32, MAX_BLOCK),
             ),
             mono: vec![0.0; MAX_BLOCK],
+            monitor_buf: vec![0.0; MAX_BLOCK],
             channels: config.channels as usize,
             rate: engine_rate as f32,
             cable: None,
@@ -569,6 +570,8 @@ struct CaptureState {
     shared: Arc<Shared>,
     core: EngineCore,
     mono: Vec<f32>,
+    /// Monitor signal when it skips the bad connection effect.
+    monitor_buf: Vec<f32>,
     channels: usize,
     rate: f32,
     cable: Option<Producer<f32>>,
@@ -627,6 +630,8 @@ impl CaptureState {
             mute: sh.mute.load(Relaxed),
         };
 
+        // Only worth a separate monitor signal while someone is listening to it.
+        let split = self.monitor.is_some() && sh.monitor_pre.load(Relaxed);
         let mut frames = 0;
         for chunk in data.chunks(self.channels * MAX_BLOCK) {
             let n = dsp::downmix(chunk, self.channels, channel, &mut self.mono, to_f32);
@@ -639,14 +644,22 @@ impl CaptureState {
             if scope {
                 sh.scope.write_input(buf);
             }
-            self.core.process(buf, params);
+            let mon = &mut self.monitor_buf[..n];
+            if split {
+                self.core.process_with_monitor(buf, mon, params);
+            } else {
+                self.core.process(buf, params);
+            }
             if scope {
                 sh.scope.write_output(buf);
             }
             sh.out_peak.fetch_max(dsp::peak(buf));
-            for tx in [&mut self.cable, &mut self.monitor].into_iter().flatten() {
-                // If an output stalls, its ring fills; drop the overflow rather than block.
+            // If an output stalls, its ring fills; drop the overflow rather than block.
+            if let Some(tx) = &mut self.cable {
                 let _ = tx.push_partial_slice(buf);
+            }
+            if let Some(tx) = &mut self.monitor {
+                let _ = tx.push_partial_slice(if split { mon } else { buf });
             }
             frames += n;
         }

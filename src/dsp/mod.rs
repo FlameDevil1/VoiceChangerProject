@@ -66,6 +66,8 @@ pub struct EngineCore {
     /// Parameters start at their first values instead of ramping from defaults.
     first_block: bool,
     limiter: Limiter,
+    /// Separate limiter for the monitor signal when it is tapped before the bad connection.
+    monitor_limiter: Limiter,
     dry: Vec<f32>,
     old_out: Vec<f32>,
 }
@@ -105,6 +107,7 @@ impl EngineCore {
             sample_rate,
             first_block: true,
             limiter: Limiter::new(sample_rate, LIMITER_CEILING_DB),
+            monitor_limiter: Limiter::new(sample_rate, LIMITER_CEILING_DB),
             dry: vec![0.0; max_block],
             old_out: vec![0.0; max_block],
         }
@@ -135,6 +138,17 @@ impl EngineCore {
 
     /// Process one block in place. `buf.len()` must not exceed `max_block`.
     pub fn process(&mut self, buf: &mut [f32], p: CoreParams) {
+        self.run(buf, None, p);
+    }
+
+    /// Like `process`, also producing the signal for "hear myself" in `monitor`: everything
+    /// except the bad connection effect, so you never hear your own voice lagging (delayed
+    /// auditory feedback makes it very hard to keep talking). `monitor` has `buf`'s length.
+    pub fn process_with_monitor(&mut self, buf: &mut [f32], monitor: &mut [f32], p: CoreParams) {
+        self.run(buf, Some(monitor), p);
+    }
+
+    fn run(&mut self, buf: &mut [f32], mut monitor: Option<&mut [f32]>, p: CoreParams) {
         util::enable_ftz();
         self.input_gain.set_target(p.input_gain);
         self.output_gain.set_target(if p.mute { 0.0 } else { p.output_gain });
@@ -149,6 +163,8 @@ impl EngineCore {
 
         // Skip the chain entirely when it is fully bypassed (or empty) so bypass costs no CPU.
         let bypassed = self.wet.is_settled() && self.wet.current() == 0.0;
+        // True when `monitor` holds its own (pre bad connection) signal.
+        let mut tapped = false;
         if (!self.chain.is_empty() || self.fading_out.is_some()) && !bypassed {
             let n = buf.len();
             self.dry[..n].copy_from_slice(buf);
@@ -164,23 +180,49 @@ impl EngineCore {
                 if self.swap_fade.is_settled() {
                     self.retired = self.fading_out.take();
                 }
+            } else if let Some(m) = monitor.as_deref_mut() {
+                tapped = self.chain.process_tapped(buf, m);
             } else {
                 self.chain.process(buf);
             }
             // Bypass toggles crossfade against the undelayed input: "bypass" means hearing your
             // own voice with the least delay, and the 20 ms fade hides the brief mismatch.
             if !(self.wet.is_settled() && self.wet.current() == 1.0) {
-                for (w, d) in buf.iter_mut().zip(self.dry[..n].iter()) {
+                let mut m = monitor.as_deref_mut().filter(|_| tapped);
+                for (i, (w, d)) in buf.iter_mut().zip(self.dry[..n].iter()).enumerate() {
                     let mix = self.wet.next_value();
                     *w = *d + (*w - *d) * mix;
+                    if let Some(m) = m.as_deref_mut() {
+                        m[i] = *d + (m[i] - *d) * mix;
+                    }
                 }
             }
         } else {
             self.wet.skip(buf.len());
         }
 
-        self.output_gain.apply(buf);
-        self.limiter.process(buf);
+        match monitor {
+            Some(m) => {
+                if tapped {
+                    for (y, z) in buf.iter_mut().zip(m.iter_mut()) {
+                        let g = self.output_gain.next_value();
+                        *y *= g;
+                        *z *= g;
+                    }
+                } else {
+                    self.output_gain.apply(buf);
+                    m.copy_from_slice(buf);
+                }
+                self.limiter.process(buf);
+                // While requested, the monitor always has its own limiter, so the bad connection
+                // turning on or off never jumps between two limiter states.
+                self.monitor_limiter.process(m);
+            }
+            None => {
+                self.output_gain.apply(buf);
+                self.limiter.process(buf);
+            }
+        }
     }
 }
 
@@ -297,5 +339,38 @@ mod tests {
         assert_eq!(out, [0.5, 0.5]);
         downmix(&stereo, 2, Some(0), &mut out, |s| s);
         assert_eq!(out, [1.0, 0.5]);
+    }
+
+    #[test]
+    fn monitor_skips_the_bad_connection() {
+        use crate::offline::signals;
+        let x = signals::vowel(48_000, 3.0, 150.0);
+        let settings = FxSettings::default()
+            .with(EffectKind::Pitch, &[("semitones", 3.0)])
+            .with(EffectKind::Network, &[("amount", 0.0)]);
+        let fx = FxParams::from_settings(&settings);
+        let mut core = EngineCore::with_chain(48_000.0, 480, Chain::build(&EffectKind::ALL, &fx, 48_000.0, 480));
+        // The same voice without the bad connection, for reference.
+        let mut plain = settings.clone();
+        plain.set_enabled(EffectKind::Network, false);
+        let plain_fx = FxParams::from_settings(&plain);
+        let mut reference_core =
+            EngineCore::with_chain(48_000.0, 480, Chain::build(&EffectKind::ALL, &plain_fx, 48_000.0, 480));
+
+        let (mut out, mut monitor, mut reference) = (Vec::new(), Vec::new(), Vec::new());
+        for (i, chunk) in x.chunks(480).enumerate() {
+            if i == 10 {
+                fx.get(EffectKind::Network).trigger.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            let (mut b, mut m, mut r) = (chunk.to_vec(), vec![0.0; chunk.len()], chunk.to_vec());
+            core.process_with_monitor(&mut b, &mut m, params());
+            reference_core.process(&mut r, params());
+            out.extend(b);
+            monitor.extend(m);
+            reference.extend(r);
+        }
+        assert_eq!(monitor, reference, "hear-myself never lags");
+        let silent = out.chunks(960).filter(|c| c.iter().all(|v| v.abs() < 1e-3)).count();
+        assert!(silent > 5, "the virtual mic does get the glitch ({silent} silent 20 ms windows)");
     }
 }
