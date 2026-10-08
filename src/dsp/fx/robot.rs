@@ -63,6 +63,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    choices: &[],
+    random: &[],
     presets: &[
         ("Classic", &[("pitch_hz", 110.0), ("monotone", 100.0), ("ring", 25.0), ("metallic", 35.0)]),
         ("Dalek", &[("pitch_hz", 90.0), ("monotone", 70.0), ("ring", 80.0), ("ring_hz", 30.0), ("metallic", 20.0)]),

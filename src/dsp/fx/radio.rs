@@ -53,6 +53,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    choices: &[],
+    random: &[],
     presets: &[
         ("Telephone", &[("low_cut", 300.0), ("high_cut", 3400.0), ("drive", 20.0), ("noise", 0.0)]),
         ("AM radio", &[("low_cut", 450.0), ("high_cut", 4500.0), ("drive", 40.0), ("noise", 20.0)]),

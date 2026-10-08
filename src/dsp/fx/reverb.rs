@@ -57,6 +57,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 0.25,
+    choices: &[],
+    random: &[],
     presets: &[
         ("Room", &[("size", 25.0), ("decay", 0.6), ("damping", 60.0), ("predelay", 5.0)]),
         ("Bathroom", &[("size", 15.0), ("decay", 1.2), ("damping", 10.0), ("predelay", 2.0)]),

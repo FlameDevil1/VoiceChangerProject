@@ -21,6 +21,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    choices: &[],
+    random: &[],
     presets: &[
         ("Warm", &[("low", 3.0), ("low_mid", 2.0), ("high", -2.0)]),
         ("Bright", &[("high_mid", 3.0), ("high", 4.0)]),

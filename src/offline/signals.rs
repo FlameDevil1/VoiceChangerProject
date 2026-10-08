@@ -61,6 +61,17 @@ pub fn vowel(rate: u32, secs: f64, f0: f64) -> Vec<f32> {
 
 /// The same vowel with its pitch gliding linearly from `f0_start` to `f0_end` (intonation).
 pub fn vowel_glide(rate: u32, secs: f64, f0_start: f64, f0_end: f64) -> Vec<f32> {
+    vowel_contour(rate, secs, f0_start.max(f0_end), |t| f0_start + (f0_end - f0_start) * t / secs)
+}
+
+/// The vowel with its pitch swinging around `center` by `depth` (ratio, e.g. 0.2 = +/-20 %)
+/// `rate_hz` times a second: like the ups and downs of speaking intonation.
+pub fn vowel_wobble(rate: u32, secs: f64, center: f64, depth: f64, rate_hz: f64) -> Vec<f32> {
+    vowel_contour(rate, secs, center * (1.0 + depth), |t| center * (1.0 + depth * (TAU * rate_hz * t).sin()))
+}
+
+/// The vowel following the pitch contour `f0_at(seconds)`; `max_f0` sets the band limit.
+fn vowel_contour(rate: u32, secs: f64, max_f0: f64, f0_at: impl Fn(f64) -> f64) -> Vec<f32> {
     let n = len(rate, secs);
     let sr = rate as f64;
     // Glottal source: one period of harmonics with -6 dB/octave rolloff (glottal -12 dB plus
@@ -68,7 +79,7 @@ pub fn vowel_glide(rate: u32, secs: f64, f0_start: f64, f0_end: f64) -> Vec<f32>
     // Nyquist, stored as a wavetable and played back with a phase accumulator (cheap enough for
     // minute-long test signals).
     const TABLE: usize = 4096;
-    let harmonics = ((sr * 0.45) / f0_start.max(f0_end)) as usize;
+    let harmonics = ((sr * 0.45) / max_f0) as usize;
     let table: Vec<f64> = (0..=TABLE)
         .map(|i| {
             let ph = TAU * i as f64 / TABLE as f64;
@@ -81,7 +92,7 @@ pub fn vowel_glide(rate: u32, secs: f64, f0_start: f64, f0_end: f64) -> Vec<f32>
             let i = phase as usize;
             let f = phase - i as f64;
             let v = table[i] + (table[i + 1] - table[i]) * f;
-            let f0 = f0_start + (f0_end - f0_start) * k as f64 / n.max(1) as f64;
+            let f0 = f0_at(k as f64 / sr);
             phase += f0 / sr * TABLE as f64;
             if phase >= TABLE as f64 {
                 phase -= TABLE as f64;

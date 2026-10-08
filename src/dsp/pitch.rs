@@ -37,7 +37,7 @@ const MAX_GRAINS: usize = 24;
 
 /// Real-time YIN pitch tracker on a decimated signal. All buffers allocated up front.
 pub struct PitchTracker {
-    decim: usize,
+    pub(crate) decim: usize,
     acc: f32,
     acc_n: usize,
     ring: Vec<f32>,
@@ -251,11 +251,76 @@ pub struct PsolaControls {
     /// 0 = natural intonation, 1 = every period forced to `target_hz` (robot monotone).
     pub monotone: f64,
     pub target_hz: f64,
+    /// Pitch movement around your running average pitch: 1 = natural, 0 = flat (monotone at
+    /// your own average), 2 = exaggerated twice as much.
+    pub intonation: f64,
+    /// Auto-tune: 0 = off, 1 = every period snapped to the nearest note of the scale.
+    pub autotune: f64,
+    /// Scale root, 0 = C ... 11 = B.
+    pub key: i32,
+    pub scale: Scale,
+    /// Vibrato depth in cents (0 = off) and rate in Hz.
+    pub vibrato_cents: f64,
+    pub vibrato_hz: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scale {
+    #[default]
+    Chromatic,
+    Major,
+    Minor,
+    Pentatonic,
+}
+
+impl Scale {
+    pub const LABELS: &'static [&'static str] = &["Chromatic", "Major", "Minor", "Pentatonic"];
+
+    pub fn from_index(i: f32) -> Self {
+        match i.round() as i32 {
+            1 => Scale::Major,
+            2 => Scale::Minor,
+            3 => Scale::Pentatonic,
+            _ => Scale::Chromatic,
+        }
+    }
+
+    fn degrees(self) -> &'static [i32] {
+        match self {
+            Scale::Chromatic => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            Scale::Major => &[0, 2, 4, 5, 7, 9, 11],
+            Scale::Minor => &[0, 2, 3, 5, 7, 8, 10],
+            Scale::Pentatonic => &[0, 2, 4, 7, 9],
+        }
+    }
+}
+
+/// Frequency of the scale note nearest to `hz`.
+pub fn snap_to_scale(hz: f64, key: i32, scale: Scale) -> f64 {
+    let midi = 69.0 + 12.0 * (hz / 440.0).log2();
+    let degrees = scale.degrees();
+    let center = midi.round() as i32;
+    let best = (center - 6..=center + 6)
+        .filter(|n| degrees.contains(&(n - key).rem_euclid(12)))
+        .min_by(|a, b| (*a as f64 - midi).abs().total_cmp(&(*b as f64 - midi).abs()))
+        .unwrap_or(center);
+    440.0 * 2f64.powf((best as f64 - 69.0) / 12.0)
 }
 
 impl Default for PsolaControls {
     fn default() -> Self {
-        Self { ratio: 1.0, formant: 1.0, monotone: 0.0, target_hz: 110.0 }
+        Self {
+            ratio: 1.0,
+            formant: 1.0,
+            monotone: 0.0,
+            target_hz: 110.0,
+            intonation: 1.0,
+            autotune: 0.0,
+            key: 0,
+            scale: Scale::Chromatic,
+            vibrato_cents: 0.0,
+            vibrato_hz: 5.5,
+        }
     }
 }
 
@@ -287,6 +352,10 @@ pub struct PitchShifter {
     max_period: f64,
     /// Right half-length of the most recently created grain.
     last_half_r: f64,
+    /// Running average of the voiced pitch, as log2(Hz), for the intonation control.
+    avg_log_f0: Option<f64>,
+    /// Last coarse period from the tracker and its full-rate refinement.
+    refined: (f32, f64),
 }
 
 impl PitchShifter {
@@ -309,6 +378,8 @@ impl PitchShifter {
             unvoiced_period: 240.0,
             max_period: 800.0,
             last_half_r: 240.0,
+            avg_log_f0: None,
+            refined: (0.0, 0.0),
         }
     }
 
@@ -323,7 +394,7 @@ impl PitchShifter {
             self.mark += self.mark_period;
             match self.tracker.period() {
                 Some(t) => {
-                    let t = (t as f64).min(self.max_period);
+                    let t = self.refine_period(t).min(self.max_period);
                     let mut next = self.mark + t;
                     if let Some(pulse) = self.tracker.pulse() {
                         // Phase error of the next mark against the pulse grid, wrapped to ±T/2.
@@ -346,13 +417,8 @@ impl PitchShifter {
     fn make_grain(&mut self, p: f64) -> Grain {
         let (a, period, voiced) = self.analysis_mark(p);
         let c = self.controls;
-        let ratio = if voiced {
-            // Monotone pulls each period towards the target pitch: ratio = target / input.
-            let towards = c.target_hz * period / self.rate as f64;
-            (c.ratio * towards.powf(c.monotone)).clamp(0.25, 4.0)
-        } else {
-            1.0
-        };
+        // Pitch decisions use the measured period, not the phase-corrected mark spacing.
+        let ratio = if voiced { self.voiced_ratio(p, self.refined.1.min(self.max_period)) } else { 1.0 };
         let step = c.formant.clamp(0.5, 2.0);
         let half_r = period / step;
         let half_l = self.last_half_r;
@@ -374,6 +440,68 @@ impl PitchShifter {
             spacing,
             gain,
         }
+    }
+
+    /// Refine the tracker's period (measured on a ~16 kHz copy, so only ~1 % accurate for high
+    /// voices) to sub-sample accuracy at full rate: search a few samples around it with the
+    /// squared-difference function on the latest audio, then interpolate the minimum. Cached
+    /// until the tracker's estimate changes (every 5 ms at most).
+    fn refine_period(&mut self, coarse: f32) -> f64 {
+        if coarse == self.refined.0 {
+            return self.refined.1;
+        }
+        let span = self.tracker.decim as i64 + 1;
+        let c = coarse.round() as i64;
+        let win = (coarse as i64 * 2).clamp(256, 2048);
+        let end = self.n as i64 - PAD as i64;
+        let (m, h) = (self.mask as i64, &self.hist);
+        let diff = |tau: i64| -> f32 {
+            (end - win..end).map(|i| h[(i & m) as usize] - h[((i - tau) & m) as usize]).map(|d| d * d).sum()
+        };
+        let lo = (c - span).max(2);
+        let (best, _) = (lo..=c + span).map(|t| (t, diff(t))).fold((c, f32::MAX), |b, x| if x.1 < b.1 { x } else { b });
+        let (a, b, cc) = (diff(best - 1), diff(best), diff(best + 1));
+        let den = a - 2.0 * b + cc;
+        let off = if den.abs() > 1e-12 { (0.5 * (a - cc) / den).clamp(-0.5, 0.5) } else { 0.0 };
+        let fine = best as f64 + off as f64;
+        // Only trust the refinement if history covers the window (not right after a reset).
+        let fine = if (self.n as i64) > win + c + span + 8 { fine } else { coarse as f64 };
+        self.refined = (coarse, fine);
+        fine
+    }
+
+    /// Pitch ratio for a voiced grain at output position `p` whose input period is `period`.
+    /// Everything depends only on absolute sample positions, so it is block-size invariant.
+    fn voiced_ratio(&mut self, p: f64, period: f64) -> f64 {
+        let c = self.controls;
+        let sr = self.rate as f64;
+        let f_in = sr / period;
+        // Monotone pulls each period towards the target pitch: ratio = target / input.
+        let mut ratio = c.ratio * (c.target_hz / f_in).powf(c.monotone);
+
+        // Intonation: scale the distance from your running average pitch (in octaves).
+        let log_f = f_in.log2();
+        let avg = *self.avg_log_f0.get_or_insert(log_f);
+        // 1.5 s time constant, advanced by one period per grain.
+        let alpha = 1.0 - (-period / (1.5 * sr)).exp();
+        self.avg_log_f0 = Some(avg + alpha * (log_f - avg));
+        if c.intonation != 1.0 {
+            ratio *= 2f64.powf((avg - log_f) * (1.0 - c.intonation));
+        }
+
+        // Auto-tune: pull the output pitch to the nearest note of the scale.
+        if c.autotune > 0.0 {
+            let f_out = f_in * ratio;
+            let target = snap_to_scale(f_out, c.key, c.scale);
+            ratio *= (target / f_out).powf(c.autotune.min(1.0));
+        }
+
+        // Vibrato on top (after auto-tune, so a hard-tuned voice can still wobble on purpose).
+        if c.vibrato_cents > 0.0 {
+            let phase = std::f64::consts::TAU * c.vibrato_hz * p / sr;
+            ratio *= 2f64.powf(c.vibrato_cents * phase.sin() / 1200.0);
+        }
+        ratio.clamp(0.25, 4.0)
     }
 
     #[inline]
@@ -483,6 +611,8 @@ impl PitchShifter {
         self.mark_period = self.unvoiced_period;
         self.mark_voiced = false;
         self.last_half_r = self.unvoiced_period;
+        self.avg_log_f0 = None;
+        self.refined = (0.0, 0.0);
     }
 }
 
@@ -578,6 +708,61 @@ mod tests {
             let f = analysis::estimate_f0(&y[start..start + 4800], 48_000, 50.0, 800.0).unwrap();
             assert!((f - 150.0).abs() < 4.0, "at {start}: {f}");
         }
+    }
+
+    /// f0 measured in consecutive windows of `win` samples, skipping the first `skip`.
+    fn f0_track(y: &[f32], skip: usize, win: usize) -> Vec<f32> {
+        y[skip..]
+            .chunks(win)
+            .filter(|c| c.len() == win)
+            .filter_map(|c| analysis::estimate_f0(c, 48_000, 50.0, 800.0))
+            .collect()
+    }
+
+    #[test]
+    fn snap_to_scale_picks_nearest_allowed_note() {
+        assert!((snap_to_scale(450.0, 0, Scale::Chromatic) - 440.0).abs() < 0.01); // A4
+        assert!((snap_to_scale(290.0, 0, Scale::Major) - 293.66).abs() < 0.05); // D4 in C major
+        // C#4 (277 Hz) is not in C major: snaps to C4 or D4, whichever is nearer.
+        let s = snap_to_scale(272.0, 0, Scale::Major);
+        assert!((s - 261.63).abs() < 0.05, "{s}");
+        // A (major) pentatonic is A, B, C#, E, F#: 300 Hz (near D) snaps to C#4.
+        assert!((snap_to_scale(300.0, 9, Scale::Pentatonic) - 277.18).abs() < 0.05);
+    }
+
+    #[test]
+    fn autotune_snaps_a_detuned_voice() {
+        let x = signals::vowel(48_000, 1.0, 452.0); // between A4 (440) and A#4 (466), nearer A4
+        let c = PsolaControls { autotune: 1.0, ..Default::default() };
+        let y = run(&x, c, 480);
+        for f in f0_track(&y, 9600, 4800) {
+            assert!((f - 440.0).abs() < 3.0, "{f}");
+        }
+    }
+
+    #[test]
+    fn intonation_flattens_or_exaggerates_a_glide() {
+        // Speech-like: pitch swinging +/-20 % around 160 Hz once a second.
+        let x = signals::vowel_wobble(48_000, 4.0, 160.0, 0.2, 1.0);
+        let span = |y: &[f32]| {
+            let t = f0_track(y, 48_000, 4800);
+            t.iter().cloned().fold(f32::MIN, f32::max) / t.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        let natural = span(&run(&x, PsolaControls::default(), 480));
+        let flat = span(&run(&x, PsolaControls { intonation: 0.0, ..Default::default() }, 480));
+        let big = span(&run(&x, PsolaControls { intonation: 2.0, ..Default::default() }, 480));
+        assert!(flat < 1.0 + (natural - 1.0) * 0.35, "flat span {flat} vs natural {natural}");
+        assert!(big > natural * 1.05, "exaggerated {big} vs natural {natural}");
+    }
+
+    #[test]
+    fn vibrato_wobbles_pitch_by_its_depth() {
+        let x = signals::vowel(48_000, 2.0, 200.0);
+        let c = PsolaControls { vibrato_cents: 50.0, vibrato_hz: 2.0, ..Default::default() };
+        let t = f0_track(&run(&x, c, 480), 9600, 2400);
+        let (lo, hi) = (t.iter().cloned().fold(f32::MAX, f32::min), t.iter().cloned().fold(f32::MIN, f32::max));
+        let cents = 1200.0 * (hi / lo).log2();
+        assert!((60.0..130.0).contains(&cents), "peak-to-peak {cents} cents (expected ~100)");
     }
 
     #[test]

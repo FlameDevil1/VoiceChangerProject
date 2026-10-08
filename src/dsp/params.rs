@@ -39,11 +39,20 @@ pub struct EffectSpec {
     pub mix_label: &'static str,
     pub default_mix: f32,
     pub presets: &'static [Preset],
+    /// Parameters shown as a dropdown: (key, option labels); the value is the option index.
+    pub choices: &'static [(&'static str, &'static [&'static str])],
+    /// Parameters the "Randomize" button may change, with the range it picks from.
+    pub random: &'static [(&'static str, f32, f32)],
 }
 
 impl EffectSpec {
     pub fn index(&self, key: &str) -> Option<usize> {
         self.params.iter().position(|p| p.key == key)
+    }
+
+    /// Option labels if `key` is a dropdown parameter.
+    pub fn choices_for(&self, key: &str) -> Option<&'static [&'static str]> {
+        self.choices.iter().find(|(k, _)| *k == key).map(|(_, c)| *c)
     }
 }
 

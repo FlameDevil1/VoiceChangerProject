@@ -62,6 +62,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    choices: &[],
+    random: &[],
     presets: &[
         ("Gentle", &[("threshold", -18.0), ("ratio", 2.0), ("makeup", 2.0)]),
         ("Broadcast", &[("threshold", -24.0), ("ratio", 4.0), ("attack", 3.0), ("makeup", 6.0)]),

@@ -44,6 +44,8 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
     mix_label: "Mix",
     default_mix: 1.0,
+    choices: &[],
+    random: &[],
     presets: &[
         ("Deeper", &[("semitones", -4.0), ("formant", -2.0)]),
         ("Higher", &[("semitones", 4.0), ("formant", 2.0)]),
