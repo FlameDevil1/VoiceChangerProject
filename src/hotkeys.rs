@@ -31,10 +31,11 @@ pub enum Action {
     PrevPreset,
     ToggleMute,
     ShowWindow,
+    GlitchBurst,
 }
 
 impl Action {
-    pub const ALL: [Action; 7] = [
+    pub const ALL: [Action; 8] = [
         Action::ToggleEffects,
         Action::HoldEffects,
         Action::NormalVoice,
@@ -42,6 +43,7 @@ impl Action {
         Action::PrevPreset,
         Action::ToggleMute,
         Action::ShowWindow,
+        Action::GlitchBurst,
     ];
 
     pub fn label(self) -> &'static str {
@@ -53,6 +55,7 @@ impl Action {
             Action::PrevPreset => "Previous preset",
             Action::ToggleMute => "Mute virtual mic",
             Action::ShowWindow => "Show window",
+            Action::GlitchBurst => "Glitch burst",
         }
     }
 
@@ -65,6 +68,9 @@ impl Action {
             Action::PrevPreset => "Load the previous preset in the list.",
             Action::ToggleMute => "Silence the virtual microphone.",
             Action::ShowWindow => "Bring the Voice Changer window to the front.",
+            Action::GlitchBurst => {
+                "A short stutter and lag on the virtual mic, on demand (turns on Bad connection if needed)."
+            }
         }
     }
 }

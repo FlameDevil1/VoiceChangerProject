@@ -12,6 +12,7 @@ mod fine_tune;
 mod help;
 pub mod icon;
 mod presets;
+mod problems;
 mod spectrum;
 mod system;
 mod test_voice;
@@ -759,6 +760,7 @@ impl eframe::App for App {
                 if advanced {
                     self.controls_section(ui, true);
                     self.preset_manager(ui);
+                    self.problems_section(ui, true);
                     self.effects_section(ui);
                     self.system_section(ui);
                     self.performance_section(ui);
@@ -766,6 +768,7 @@ impl eframe::App for App {
                 } else {
                     self.preset_grid(ui);
                     self.fine_tune(ui);
+                    self.problems_section(ui, false);
                     self.controls_section(ui, false);
                 }
                 ui.add_space(4.0);

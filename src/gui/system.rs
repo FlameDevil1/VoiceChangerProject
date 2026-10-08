@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::mpsc::{self, Receiver};
 use voice_changer::audio::Shared;
+use voice_changer::dsp::EffectKind;
 use voice_changer::hotkeys::{Action, Event, HotkeyService};
 
 /// Audio-state part of a hotkey, applied immediately on the thread that saw the key.
@@ -27,6 +28,9 @@ fn apply_audio_action(shared: &Shared, e: Event) {
         Event::Pressed(Action::NormalVoice) => shared.bypass.store(true, Relaxed),
         Event::Pressed(Action::ToggleMute) => {
             shared.mute.fetch_xor(true, Relaxed);
+        }
+        Event::Pressed(Action::GlitchBurst) => {
+            shared.fx.get(EffectKind::Network).trigger.fetch_add(1, Relaxed);
         }
         _ => {}
     }
@@ -99,6 +103,7 @@ impl App {
                     }
                 }
                 Event::Pressed(Action::ShowWindow) => super::bring_to_front(ctx),
+                Event::Pressed(Action::GlitchBurst) => self.glitch_burst(),
                 Event::Captured(key) => self.finish_capture(key),
                 Event::CaptureCancelled => {
                     self.system.capturing = None;

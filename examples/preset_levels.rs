@@ -34,4 +34,8 @@ fn main() {
     for p in presets::builtins() {
         report(&p.name, &x, &p.fx);
     }
+    println!("\n-- scenarios --");
+    for s in presets::SCENARIOS {
+        report(s.name, &x, &s.apply(&FxSettings::default()));
+    }
 }

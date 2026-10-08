@@ -4,6 +4,10 @@
 //! **Mic cleanup is kept separate from voice character.** Noise suppression and the gate depend
 //! on your room and microphone, not on the voice you want, so loading a preset leaves them alone
 //! unless the preset was saved with "include mic cleanup".
+//!
+//! **Problems are a layer too.** The bad mic and bad connection effects are set by scenarios
+//! ("Laggy Wi-Fi", ...), so you can be a robot on a laggy call. A preset that doesn't use them
+//! leaves them as they are; one saved with them on sets them.
 
 use crate::dsp::{EffectKind, FxSettings};
 use serde::{Deserialize, Serialize};
@@ -13,6 +17,9 @@ pub const PRESET_SCHEMA: u32 = 1;
 
 /// Effects that adapt the mic to its environment rather than change the voice.
 pub const CLEANUP: [EffectKind; 2] = [EffectKind::Denoise, EffectKind::Gate];
+
+/// Effects that simulate bad hardware and connections, set by scenarios.
+pub const PROBLEMS: [EffectKind; 2] = [EffectKind::BadMic, EffectKind::Network];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -53,13 +60,13 @@ impl Preset {
     pub fn apply(&self, current: &FxSettings) -> FxSettings {
         let mut out = self.fx.clone();
         out.normalize();
-        if !self.include_cleanup {
-            for kind in CLEANUP {
-                match current.effects.get(&kind) {
-                    Some(s) => out.effects.insert(kind, s.clone()),
-                    None => out.effects.remove(&kind),
-                };
-            }
+        let keep_problems = !PROBLEMS.iter().any(|&k| self.fx.enabled(k));
+        let keep = CLEANUP.iter().filter(|_| !self.include_cleanup).chain(PROBLEMS.iter().filter(|_| keep_problems));
+        for &kind in keep {
+            match current.effects.get(&kind) {
+                Some(s) => out.effects.insert(kind, s.clone()),
+                None => out.effects.remove(&kind),
+            };
         }
         out
     }
@@ -75,6 +82,115 @@ impl Preset {
         }) && applied.order == current.order
     }
 }
+
+/// A bad mic / bad connection combination, applied on top of whatever voice is loaded.
+#[derive(Clone, Copy, Debug)]
+pub struct Scenario {
+    pub name: &'static str,
+    pub description: &'static str,
+    /// Bad mic settings (empty = bad mic off).
+    pub bad_mic: &'static [(&'static str, f32)],
+    /// Bad connection settings (empty = off).
+    pub network: &'static [(&'static str, f32)],
+}
+
+impl Scenario {
+    /// `current` with this scenario's problems (and nothing else) changed.
+    pub fn apply(&self, current: &FxSettings) -> FxSettings {
+        let mut out = current.clone();
+        for (kind, values) in [(EffectKind::BadMic, self.bad_mic), (EffectKind::Network, self.network)] {
+            out.effects.remove(&kind);
+            if !values.is_empty() {
+                out = out.with(kind, values);
+            }
+        }
+        out
+    }
+
+    pub fn matches(&self, current: &FxSettings) -> bool {
+        let applied = self.apply(current);
+        PROBLEMS.iter().all(|&k| {
+            applied.enabled(k) == current.enabled(k)
+                && (!current.enabled(k)
+                    || k.spec().params.iter().all(|p| applied.get(k, p.key) == current.get(k, p.key)))
+        })
+    }
+}
+
+/// `current` with the bad mic and bad connection turned off.
+pub fn clear_problems(current: &FxSettings) -> FxSettings {
+    let mut out = current.clone();
+    for kind in PROBLEMS {
+        out.set_enabled(kind, false);
+    }
+    out
+}
+
+/// Built-in problem scenarios, in display order.
+pub const SCENARIOS: [Scenario; 6] = [
+    Scenario {
+        name: "Cheap headset",
+        description: "Thin, hissy, pumping gaming headset",
+        bad_mic: &[("low_cut", 250.0), ("high_cut", 5000.0), ("hiss", 35.0), ("clip", 20.0), ("pump", 50.0)],
+        network: &[("amount", 15.0), ("lag", 0.0), ("drift", 0.0), ("freeze", 0.0), ("codec_rate", 16000.0)],
+    },
+    Scenario {
+        name: "Laggy Wi-Fi",
+        description: "Lag spikes, falling behind and the odd stutter",
+        bad_mic: &[],
+        network: &[
+            ("amount", 55.0),
+            ("lag", 80.0),
+            ("loss", 40.0),
+            ("jitter", 25.0),
+            ("choppy", 20.0),
+            ("drift", 40.0),
+            ("freeze", 10.0),
+        ],
+    },
+    Scenario {
+        name: "Tunnel",
+        description: "Mobile data in a tunnel: breaking up badly",
+        bad_mic: &[("low_cut", 300.0), ("high_cut", 3400.0)],
+        network: &[
+            ("amount", 85.0),
+            ("lag", 50.0),
+            ("loss", 80.0),
+            ("jitter", 70.0),
+            ("choppy", 60.0),
+            ("drift", 10.0),
+            ("freeze", 40.0),
+            ("bits", 10.0),
+            ("codec_rate", 8000.0),
+            ("variation", 30.0),
+        ],
+    },
+    Scenario {
+        name: "Broken cable",
+        description: "Crackle, hum and cut-outs from a loose connection",
+        bad_mic: &[("crackle", 70.0), ("dropout", 50.0), ("hum", 40.0), ("handling", 20.0), ("variation", 70.0)],
+        network: &[],
+    },
+    Scenario {
+        name: "Old webcam",
+        description: "Distant, hissy built-in webcam mic",
+        bad_mic: &[
+            ("low_cut", 200.0),
+            ("high_cut", 6000.0),
+            ("hiss", 55.0),
+            ("room", 45.0),
+            ("pump", 70.0),
+            ("drift", 20.0),
+        ],
+        network: &[("amount", 10.0), ("lag", 0.0), ("drift", 0.0), ("codec_rate", 16000.0)],
+    },
+    Scenario {
+        name: "Bathroom speakerphone",
+        description: "Phone on speaker in a small, echoey room",
+        bad_mic: &[("room", 90.0), ("low_cut", 400.0), ("high_cut", 4500.0), ("pump", 40.0), ("clip", 15.0)],
+        network: &[("amount", 20.0), ("lag", 10.0), ("drift", 0.0), ("codec_rate", 16000.0)],
+    },
+];
 
 fn builtin(name: &str, description: &str, fx: FxSettings) -> Preset {
     Preset { name: name.into(), description: description.into(), fx, ..Default::default() }
@@ -438,6 +554,45 @@ mod tests {
                 assert!(d.abs() < 3.0, "{} preset {name}: {d:+.1} dB", kind.key());
             }
         }
+        for s in SCENARIOS {
+            let d = change(&s.apply(&FxSettings::default()));
+            assert!(d.abs() < 3.0, "scenario {}: {d:+.1} dB", s.name);
+        }
+    }
+
+    #[test]
+    fn scenarios_are_valid_and_layer_on_top_of_the_voice() {
+        let mut names: Vec<_> = SCENARIOS.iter().map(|s| s.name).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), SCENARIOS.len());
+        for s in SCENARIOS {
+            assert!(!s.bad_mic.is_empty() || !s.network.is_empty(), "{}", s.name);
+            for (kind, values) in [(EffectKind::BadMic, s.bad_mic), (EffectKind::Network, s.network)] {
+                for (key, v) in values {
+                    let p = kind.spec().index(key).map(|i| kind.spec().params[i]);
+                    assert!(p.is_some_and(|p| (p.min..=p.max).contains(v)), "{}: {kind:?} {key}", s.name);
+                }
+            }
+        }
+        let robot = builtins().into_iter().find(|p| p.name == "Robot").unwrap();
+        let wifi = SCENARIOS[1];
+        // Scenario on top of a voice: the voice stays.
+        let fx = wifi.apply(&robot.apply(&FxSettings::default()));
+        assert!(robot.matches(&fx) && wifi.matches(&fx));
+        assert!(fx.enabled(EffectKind::Network) && !fx.enabled(EffectKind::BadMic));
+        // Another voice on top of the scenario: the scenario stays.
+        let deep = builtins().into_iter().find(|p| p.name == "Deep voice").unwrap();
+        let fx = deep.apply(&fx);
+        assert!(deep.matches(&fx) && wifi.matches(&fx) && !robot.matches(&fx));
+        // Clearing turns problems off and keeps the voice.
+        let fx = clear_problems(&fx);
+        assert!(deep.matches(&fx) && !wifi.matches(&fx));
+        assert!(PROBLEMS.iter().all(|&k| !fx.enabled(k)));
+        // A preset saved with a problem on sets it when loaded.
+        let saved = Preset::capture("Laggy robot", &wifi.apply(&robot.apply(&FxSettings::default())), false);
+        let fx = saved.apply(&SCENARIOS[3].apply(&FxSettings::default()));
+        assert!(wifi.matches(&fx), "the saved scenario replaces the current one");
     }
 
     #[test]

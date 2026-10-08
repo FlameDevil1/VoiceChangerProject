@@ -36,12 +36,7 @@ impl Dice<'_> {
 
     /// Save `fx` as an undo step before a one-click change.
     pub fn remember(&mut self, fx: &FxSettings) {
-        if self.history.last() != Some(fx) {
-            if self.history.len() == HISTORY {
-                self.history.remove(0);
-            }
-            self.history.push(fx.clone());
-        }
+        remember(self.history, fx);
     }
 
     /// "Undo" button, shown only when there is something to undo.
@@ -72,6 +67,16 @@ impl Dice<'_> {
                 self.locks.remove(&id);
             }
         }
+    }
+}
+
+/// Push `fx` onto an undo history (skipping duplicates, keeping the newest `HISTORY` steps).
+pub fn remember(history: &mut Vec<FxSettings>, fx: &FxSettings) {
+    if history.last() != Some(fx) {
+        if history.len() == HISTORY {
+            history.remove(0);
+        }
+        history.push(fx.clone());
     }
 }
 
@@ -113,6 +118,7 @@ pub fn effect_panel(
                     EffectKind::Gate => Some(if m > 0.5 { "open".to_string() } else { "closed".to_string() }),
                     EffectKind::Compressor => Some(format!("GR {:.1} dB", m.abs())),
                     EffectKind::Denoise if !unsupported => Some(format!("voice {:.0}%", m * 100.0)),
+                    EffectKind::Network if m >= 1.0 => Some(format!("lag {m:.0} ms")),
                     _ => None,
                 };
                 if let Some(r) = readout {
