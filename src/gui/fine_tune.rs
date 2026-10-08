@@ -20,7 +20,7 @@ impl App {
     pub(super) fn fine_tune(&mut self, ui: &mut egui::Ui) {
         let mut fx = self.cfg.fx.clone();
         let mut locks = self.cfg.locked.clone();
-        let mut dice = Dice { rng: &mut self.rng, locks: &mut locks };
+        let mut dice = Dice { rng: &mut self.rng, locks: &mut locks, history: &mut self.fx_history };
         ui.add_space(4.0);
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -61,9 +61,9 @@ impl App {
                             .on_hover_text("A random pitch, formant and voice character (locked controls stay)")
                             .clicked()
                         {
-                            dice.roll(&mut fx, EffectKind::Pitch);
-                            dice.roll(&mut fx, EffectKind::Character);
+                            dice.roll_all(&mut fx, &[EffectKind::Pitch, EffectKind::Character]);
                         }
+                        dice.undo_button(ui, &mut fx);
                         ui.label(RichText::new("More controls in Advanced mode.").small().weak());
                     });
                 });

@@ -66,6 +66,8 @@ pub struct App {
     update_dismissed: bool,
     /// For the Randomize buttons.
     rng: voice_changer::dsp::util::Rng,
+    /// Undo steps for Randomize and preset clicks (newest last).
+    fx_history: Vec<FxSettings>,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -127,6 +129,7 @@ impl App {
             rng: voice_changer::dsp::util::Rng::new(
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64),
             ),
+            fx_history: Vec::new(),
             _instance: instance,
         };
         if check_updates {
@@ -583,7 +586,7 @@ impl App {
         let shared = self.engine.shared.clone();
         let active = self.is_active();
         let mut locks = self.cfg.locked.clone();
-        let mut dice = effects::Dice { rng: &mut self.rng, locks: &mut locks };
+        let mut dice = effects::Dice { rng: &mut self.rng, locks: &mut locks, history: &mut self.fx_history };
         section(ui, "Effects", |ui| {
             ui.label(
                 RichText::new(
@@ -738,6 +741,14 @@ impl eframe::App for App {
         self.intercept_close(&ctx);
         self.tick(&ctx);
         let advanced = self.cfg.ui_mode == UiMode::Advanced;
+        // Ctrl+Z undoes the last Randomize / preset click (text fields keep their own undo).
+        let undo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+        if ctx.memory(|m| m.focused().is_none())
+            && ctx.input_mut(|i| i.consume_shortcut(&undo))
+            && let Some(previous) = self.fx_history.pop()
+        {
+            self.set_fx(previous);
+        }
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 self.header(ui);

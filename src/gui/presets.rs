@@ -94,11 +94,13 @@ impl App {
                     }
                 });
             }
-            if modified && current.is_some() {
-                ui.label(
-                    RichText::new("* changed since loaded. Save it under a new name in Advanced mode.").small().weak(),
-                );
-            }
+            // Always one line, so the controls below don't jump when the "*" note appears.
+            let note = if modified && current.is_some() {
+                "* changed since loaded. Save it under a new name in Advanced mode."
+            } else {
+                "Click a voice to use it. Adjust it under Fine-tune."
+            };
+            ui.label(RichText::new(note).small().weak());
         });
         if let Some(name) = clicked {
             self.load_preset(&name);

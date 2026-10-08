@@ -9,16 +9,52 @@ use voice_changer::dsp::params::EffectParams;
 use voice_changer::dsp::util::Rng;
 use voice_changer::dsp::{EffectKind, FxSettings};
 
-/// What the Randomize buttons need: a generator and the controls the user locked.
+/// Undo steps kept for Randomize and preset clicks.
+const HISTORY: usize = 30;
+
+/// What the Randomize and preset buttons need: a generator, the controls the user locked and
+/// the undo history.
 pub struct Dice<'a> {
     pub rng: &'a mut Rng,
     pub locks: &'a mut BTreeSet<String>,
+    pub history: &'a mut Vec<FxSettings>,
 }
 
 impl Dice<'_> {
     pub fn roll(&mut self, fx: &mut FxSettings, kind: EffectKind) {
+        self.roll_all(fx, &[kind]);
+    }
+
+    /// Randomize several effects as one undo step.
+    pub fn roll_all(&mut self, fx: &mut FxSettings, kinds: &[EffectKind]) {
+        self.remember(fx);
         let locks = &*self.locks;
-        fx.randomize(kind, self.rng, |key| locks.contains(&lock_key(kind, key)));
+        for &kind in kinds {
+            fx.randomize(kind, self.rng, |key| locks.contains(&lock_key(kind, key)));
+        }
+    }
+
+    /// Save `fx` as an undo step before a one-click change.
+    pub fn remember(&mut self, fx: &FxSettings) {
+        if self.history.last() != Some(fx) {
+            if self.history.len() == HISTORY {
+                self.history.remove(0);
+            }
+            self.history.push(fx.clone());
+        }
+    }
+
+    /// "Undo" button, shown only when there is something to undo.
+    pub fn undo_button(&mut self, ui: &mut egui::Ui, fx: &mut FxSettings) {
+        if !self.history.is_empty()
+            && ui
+                .small_button("Undo")
+                .on_hover_text("Back to the settings before the last Randomize or preset click (Ctrl+Z)")
+                .clicked()
+            && let Some(previous) = self.history.pop()
+        {
+            *fx = previous;
+        }
     }
 
     /// Lock toggle cell for `kind`/`key` if Randomize may change it (an empty cell otherwise).
@@ -109,6 +145,11 @@ pub fn effect_panel(
                 ui.horizontal_wrapped(|ui| {
                     for (name, values) in spec.presets {
                         if ui.small_button(*name).clicked() {
+                            dice.remember(fx);
+                            // Start from neutral so the result doesn't depend on what was set before.
+                            for p in spec.params {
+                                fx.set(kind, p.key, p.default);
+                            }
                             for (k, v) in *values {
                                 fx.set(kind, k, *v);
                             }
@@ -123,6 +164,7 @@ pub fn effect_panel(
                     {
                         dice.roll(fx, kind);
                     }
+                    dice.undo_button(ui, fx);
                 });
             }
             let mut moved = false;
