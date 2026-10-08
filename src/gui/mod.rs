@@ -75,6 +75,8 @@ pub struct App {
     glitch_only: Option<Instant>,
     files: files::FileBatch,
     recorder: recorder::Recorder,
+    /// Frames left in which to (re)hide the window: eframe shows it after its first frame.
+    hide_frames: u8,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -88,7 +90,12 @@ pub fn bring_to_front(ctx: &egui::Context) {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, cfg: Config, instance: crate::single_instance::Guard) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        cfg: Config,
+        start_hidden: bool,
+        instance: crate::single_instance::Guard,
+    ) -> Self {
         let shared = Arc::new(Shared::default());
         shared.input_gain.store(db_to_gain(cfg.input_gain_db));
         shared.output_gain.store(db_to_gain(cfg.output_gain_db));
@@ -101,10 +108,8 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         let system = system::System::start(&cc.egui_ctx, shared.clone(), cfg.hotkeys.clone());
         let engine = EngineHandle::spawn(shared, Box::new(move || ctx.request_repaint()));
-        if cfg.start_minimized && system.tray.is_none() {
-            // Hidden with no tray icon would leave no way back in.
-            bring_to_front(&cc.egui_ctx);
-        }
+        // Hidden with no tray icon would leave no way back in.
+        let start_hidden = start_hidden && system.tray.is_some();
         apply_theme(&cc.egui_ctx, cfg.theme);
         cc.egui_ctx.set_zoom_factor(cfg.ui_scale.clamp(0.5, 3.0));
         log::info!("DSP SIMD level: {}", simd::level().label());
@@ -141,6 +146,7 @@ impl App {
             glitch_only: None,
             files: Default::default(),
             recorder: Default::default(),
+            hide_frames: if start_hidden { 3 } else { 0 },
             _instance: instance,
         };
         if check_updates {
@@ -262,6 +268,8 @@ impl App {
             self.last_refresh = Instant::now();
             self.engine.send(Command::RefreshDevices);
             self.mic_blocked = voice_changer::audio::privacy::microphone_blocked();
+            // Task Manager's Startup page can change this behind our back.
+            self.system.autostart = voice_changer::autostart::is_enabled();
         }
         self.was_focused = focused;
 
@@ -745,6 +753,11 @@ impl App {
 impl eframe::App for App {
     /// Runs before every frame and on wake-ups while hidden (hotkeys, tray).
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.hide_frames > 0 {
+            self.hide_frames -= 1;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.request_repaint();
+        }
         self.background(ctx);
         self.recorder_tick(ctx);
     }

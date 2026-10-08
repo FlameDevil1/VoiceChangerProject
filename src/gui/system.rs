@@ -44,10 +44,21 @@ pub struct System {
     /// Action whose key combination is being recorded in the settings panel.
     pub capturing: Option<Action>,
     pub quitting: bool,
+    /// "Start with Windows" (read from the registry on start and when the window gets focus).
+    pub autostart: bool,
+    /// Apps running as administrator that came to the front (hotkeys can't reach them).
+    admin_apps: Receiver<String>,
+    pub admin_seen: Vec<String>,
 }
 
 impl System {
     pub fn start(ctx: &egui::Context, shared: Arc<Shared>, config: voice_changer::hotkeys::HotkeyConfig) -> Self {
+        let (admin_tx, admin_apps) = mpsc::channel();
+        let wake = ctx.clone();
+        voice_changer::elevation::watch(move |name| {
+            let _ = admin_tx.send(name);
+            wake.request_repaint();
+        });
         let (tx, events) = mpsc::channel();
         let wake = ctx.clone();
         let hotkeys = HotkeyService::start(config, move |e| {
@@ -56,7 +67,17 @@ impl System {
             let _ = tx.send(e);
             wake.request_repaint();
         });
-        Self { tray: Tray::new(ctx), toaster: Toaster::start(), hotkeys, events, capturing: None, quitting: false }
+        Self {
+            tray: Tray::new(ctx),
+            toaster: Toaster::start(),
+            hotkeys,
+            events,
+            capturing: None,
+            quitting: false,
+            autostart: voice_changer::autostart::is_enabled(),
+            admin_apps,
+            admin_seen: Vec::new(),
+        }
     }
 }
 
@@ -113,6 +134,19 @@ impl App {
                 }
                 _ => {}
             }
+        }
+
+        // Once per app and session: hotkeys can't reach an app running as administrator.
+        let admin: Vec<String> = self.system.admin_apps.try_iter().collect();
+        for name in admin {
+            if self.system.admin_seen.contains(&name) {
+                continue;
+            }
+            log::info!("{name} runs as administrator; hotkeys can't reach it");
+            if self.cfg.hotkeys.enabled && !self.cfg.hotkeys.bindings.is_empty() {
+                self.toast(&format!("Hotkeys don't work in {name} (it runs as administrator)"));
+            }
+            self.system.admin_seen.push(name);
         }
 
         let commands = self.system.tray.as_ref().map(Tray::poll).unwrap_or_default();
@@ -198,9 +232,9 @@ impl App {
         self.mark_dirty();
     }
 
-    /// Advanced mode: key bindings and tray behaviour.
+    /// Advanced mode: key bindings, tray behaviour and starting with Windows.
     pub(super) fn system_section(&mut self, ui: &mut egui::Ui) {
-        section(ui, "Hotkeys & tray", |ui| {
+        section(ui, "Hotkeys, tray & startup", |ui| {
             if self.system.hotkeys.is_none() {
                 ui.colored_label(AMBER, "Global hotkeys are unavailable (the keyboard hook could not be installed).");
             }
@@ -246,11 +280,21 @@ impl App {
                     self.apply_hotkeys();
                 }
             });
-            ui.label(
-                RichText::new("Hotkeys don't reach this app while a program running as administrator is focused.")
-                    .small()
-                    .weak(),
-            );
+            if self.system.admin_seen.is_empty() {
+                ui.label(
+                    RichText::new("Hotkeys don't work while an app running as administrator is focused.")
+                        .small()
+                        .weak(),
+                );
+            } else {
+                ui.colored_label(
+                    AMBER,
+                    format!(
+                        "Hotkeys can't reach {}: running as administrator. To use them there, run Voice Changer                          as administrator too (dropping files onto its window won't work then).",
+                        self.system.admin_seen.join(", ")
+                    ),
+                );
+            }
             ui.separator();
             if ui.checkbox(&mut self.cfg.close_to_tray, "Keep running in the tray when the window is closed").changed()
             {
@@ -258,6 +302,20 @@ impl App {
             }
             if ui.checkbox(&mut self.cfg.start_minimized, "Start hidden in the tray").changed() {
                 self.mark_dirty();
+            }
+            let mut autostart = self.system.autostart;
+            if ui
+                .checkbox(&mut autostart, "Start with Windows")
+                .on_hover_text("Starts hidden in the tray when you sign in, and turns the voice on if it was on when you last closed the app.")
+                .changed()
+            {
+                match voice_changer::autostart::set(autostart) {
+                    Ok(()) => self.system.autostart = autostart,
+                    Err(e) => {
+                        log::warn!("start with Windows: {e}");
+                        self.toast("Couldn't change \"Start with Windows\"");
+                    }
+                }
             }
             if self.system.tray.is_none() {
                 ui.colored_label(AMBER, "The tray icon could not be created.");

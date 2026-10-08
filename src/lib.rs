@@ -4,10 +4,12 @@
 //! be unit-tested and reused by the offline file renderer.
 
 pub mod audio;
+pub mod autostart;
 pub mod backup;
 pub mod calibrate;
 pub mod config;
 pub mod dsp;
+pub mod elevation;
 pub mod hotkeys;
 pub mod logging;
 pub mod offline;
