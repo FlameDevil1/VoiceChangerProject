@@ -36,14 +36,18 @@ The binary is `target/release/voicechanger.exe`.
 6. Pick a voice in **Simple** mode and adjust it under **Fine-tune** (or roll the dice with
    **Randomize voice**; lock the sliders you want to keep). Switch to **Advanced** for every
    effect (auto-tune, vibrato, voice character, ...) and to save your own presets (stored in
-   `%APPDATA%\VoiceChanger\presets`, shareable via Export/Import).
-7. Hotkeys work while gaming: **Ctrl+Alt+V** effects on/off, **Ctrl+Alt+Page Down/Up** next or
+   `%APPDATA%\VoiceChanger\presets`, shareable via Export/Import). Ctrl+Z undoes a Randomize
+   or preset click.
+7. **Bad mic & connection**: make it sound like a cheap headset, laggy Wi-Fi or a broken cable,
+   on top of any voice. **Glitch now** (or a hotkey) forces a stutter and lag on demand. You
+   hear yourself without the lag; everyone else gets it.
+8. Hotkeys work while gaming: **Ctrl+Alt+V** effects on/off, **Ctrl+Alt+Page Down/Up** next or
    previous preset, **Ctrl+Alt+N** normal voice, **Ctrl+Alt+M** mute. Change them, or add a
    hold-to-use key, under Advanced → Hotkeys & tray. Closing the window keeps it in the tray.
-8. **Test my voice** records 5 seconds (the virtual mic is muted meanwhile); then play it back as
+9. **Test my voice** records 5 seconds (the virtual mic is muted meanwhile); then play it back as
    the changed voice (re-rendered with your current settings, so tweak and replay) or the original.
-9. Problems? Advanced → Help & diagnostics → **Copy diagnostics**, and paste it into an issue.
-   **Back up settings** saves your settings and presets to one file.
+10. Problems? Advanced → Help & diagnostics → **Copy diagnostics**, and paste it into an issue.
+    **Back up settings** saves your settings and presets to one file.
 
 ## Releases
 

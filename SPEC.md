@@ -145,7 +145,7 @@ Named effects in the original spec are mostly presets over a smaller set of DSP 
 | Event generators | Hum, crackle, handling thumps, wind, plosive pops, gain drift/pumping |
 
 Default chain order: noise suppression → gate → pitch/formant → robot → EQ → compressor →
-reverb → radio → (bad-mic/connection, step 6) → **limiter (always last)**. Noise suppression
+reverb → radio → bad mic → bad connection → **limiter (always last)**. Noise suppression
 runs before the gate so the gate sees a clean signal. The order is stored per config/preset, and
 configs from older versions get new effects inserted at their default position.
 
@@ -165,6 +165,12 @@ all generated from it, so adding an effect is one module plus one line in `chain
 | Compressor | Feed-forward, 6 dB soft knee, gain-reduction readout | 0.23 % |
 | Reverb | 8-line FDN with Hadamard mixing, per-line damping, RT60-accurate decay, slewed size | 0.37 % |
 | Radio / telephone | 24 dB/oct band-pass, tanh drive, seeded static; telephone / AM / walkie presets | 0.19 % |
+| Voice character (step 8) | Tilt/warmth/presence/nasal filters, envelope-following breath noise, flutter + saturation, modulated doubling | 0.06 %† |
+| Bad mic (step 9) | 13 problems in signal-chain order; no delay; every control at 0 is bit-exact | 0.22 %† |
+| Bad connection (step 9) | History buffer, WSOLA time-stretch reader, looper, crossfaded source switching, codec | 0.05 %† |
+
+†Offline (`cargo run --release --example effect_cost`), which reads slightly lower than live;
+all eleven together offline: 3.2 %.
 
 \*Share of one Ryzen 7 7735HS laptop core, live. All eight together: 2.3 %; in the live engine,
 worst callback 4.5 % of its time budget.
@@ -223,18 +229,47 @@ As specified (value display, typed input, reset per slider, randomize with locks
 - **Simple mode Fine-tune** (collapsed by default): Pitch, Formant, Tone, Breathiness,
   Roughness and Randomize voice, without opening the effect panels.
 
-### 3B. Bad mic & bad connection
+### 3B. Bad mic & bad connection: **done (step 9)**
 
-As specified, plus:
-- **Monitor tap point: pre or post bad-connection effects, default pre.** Hearing your own voice
-  delayed by 0.2–2 s (delayed auditory feedback) makes it very hard to keep talking.
-- Delay build-up/catch-up reuses the pitch engine's time-stretcher.
-- Buffers allocated only while enabled; full bypass when off; crossfaded switching (unchanged).
+Two effects, each a spec table like the others (so presets, randomize, CLI and GUI come free):
+
+- **Bad mic** (no delay): low/high cut, clipping, hiss (pink), mains hum (50/60 Hz dropdown),
+  crackle (in bursts), plosive pops (low-band onset boost), boxy room, handling bumps, wind
+  gusts, level drift, auto-gain pumping (background swells in pauses), cutting in/out (an
+  over-eager gate tracking your peak level), dropouts. Order follows the physics: room and
+  handling reach the capsule, the capsule's bandwidth shapes them, electronics add hiss/hum/
+  crackle, then gain stages, converter clipping, gate and cable.
+- **Bad connection**: lag spikes (audio stalls, plays late, then skips ahead or speeds up),
+  packet loss (the previous packet repeats once, then silence), robotic jitter (frames replaced
+  by a looped 5–12 ms fragment), cut-outs, fall behind and catch up, freeze/loop, and a codec
+  (bits, sample rate). Speed changes use a **WSOLA** reader (20 ms grains, 5 ms alignment
+  search), so catching up doesn't change pitch; at normal speed it is an exact delayed copy.
+- **Quick controls**: an "Overall" amount scales how often and how badly everything happens (the
+  Simple-mode "Bad connection" master slider); **Variation** makes problems come and go (calm
+  stretches and bad patches): together they are the spec's random event mode. **Glitch burst**
+  (button and hotkey): ~0.6 s of robotic warble, then a 0.3–0.7 s lag that skips back to live.
+- **Scenarios** (Cheap headset, Laggy Wi-Fi, Tunnel, Broken cable, Old webcam, Bathroom
+  speakerphone) set only these two effects, so they layer on top of any voice. Changed from the
+  spec, which listed them as presets: a preset would replace your voice.
+- **Monitor tap point: before the bad connection, by default.** Hearing your own voice delayed by
+  0.2–2 s (delayed auditory feedback) makes it very hard to keep talking. The tap has its own
+  limiter and costs nothing unless monitoring is on and the effect is active.
+- **Latency and bypass**: off = skipped (zero CPU, zero delay) and its history cleared once.
+  With no problem happening the output *is* the input, bit-exact, with no added delay; delay
+  exists only during a lag or catch-up and is the effect's intent, not the app's latency
+  setting. Every switch between live, silence and replayed audio is crossfaded (1–15 ms).
+  Changed from the spec: the 2.5 s history (~0.5 MB) is allocated when the chain is built, not
+  when the effect is enabled; allocating on enable would mean rebuilding the chain from the
+  controller thread for half a megabyte. It is never read or written while the effect is off.
+- Random events start on a 10 ms tick at absolute sample positions with a seeded RNG, so output
+  is block-size invariant and reproducible.
 
 ## 4. Presets: **done (step 5)**
 
 - 14 built-ins: Normal, Deep voice, Monster, Female, Male, Child, Chipmunk, Robot, Alien,
-  Telephone, Walkie-talkie, Cave, Announcer, Podcast. Bad-connection scenarios join in step 9.
+  Telephone, Walkie-talkie, Cave, Announcer, Podcast, plus Old man, Ghost and Auto-tune (step 9).
+  Bad mic / connection scenarios are a separate layer (see 3B). Every voice, effect preset and
+  scenario keeps the loudness within 3 dB of your voice (tested).
 - User presets: one JSON file each in `%APPDATA%\VoiceChanger\presets` (`schema_version`,
   unknown fields ignored, missing ones defaulted). Save, Save as, rename, delete (with
   confirmation), import (several files at once; name clashes get " (2)"), export.
@@ -347,7 +382,8 @@ should check for VB-CABLE and link to it, not bundle it.
    release workflow (tag `vX.Y.Z` to publish a zip).
 8. ✅ Modulation sliders (3A): intonation, vibrato, auto-tune; Voice character effect;
    dropdown parameters; randomize with locks; Simple-mode Fine-tune.
-9. Bad mic / bad connection (3B), scenario presets, monitor tap point.
+9. ✅ Bad mic and bad connection (3B), scenarios, master slider, glitch burst (button and
+   hotkey), monitor tap point; preset loudness evened out; undo for Randomize and presets.
 10. File processing UI (batch, MP3 export, record-with-effects).
 11. Installer, signing, startup options, stretch features.
 
