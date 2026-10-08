@@ -105,7 +105,8 @@ pub fn effect_panel(
     let spec = kind.spec();
     let id = ui.make_persistent_id(("effect", kind.key()));
     let mut enabled = fx.enabled(kind);
-    let unsupported = live.status.load(Relaxed) == STATUS_UNSUPPORTED_RATE;
+    // Status values are per effect; this one is noise suppression's.
+    let unsupported = kind == EffectKind::Denoise && live.status.load(Relaxed) == STATUS_UNSUPPORTED_RATE;
     let mut action = None;
     egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
         .show_header(ui, |ui| {

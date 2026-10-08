@@ -110,6 +110,9 @@ pub const SPEC: EffectSpec = EffectSpec {
     ],
 };
 
+/// `status` while a problem (or a requested glitch) is playing.
+pub const STATUS_BUSY: u32 = 1;
+
 const AMOUNT: usize = 0;
 const LAG: usize = 1;
 const LAG_MS: usize = 2;
@@ -699,6 +702,8 @@ impl Processor for Network {
 
         let delay = if self.cur == Src::Reader { (self.n as f64 - self.reader.position()).max(0.0) } else { 0.0 };
         self.params.meter.store((delay / self.sr as f64 * 1000.0) as f32);
+        let busy = self.phase != Phase::Idle || self.fade_left > 0 || self.glitch_pending;
+        self.params.status.store(if busy { STATUS_BUSY } else { 0 }, Relaxed);
     }
 
     fn reset(&mut self) {
@@ -717,6 +722,7 @@ impl Processor for Network {
         self.hold = 0.0;
         self.hold_phase = 0.0;
         self.params.meter.store(0.0);
+        self.params.status.store(0, Relaxed);
         // `seen_trigger` is kept: a glitch requested while off plays once the effect is on.
     }
 }

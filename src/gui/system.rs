@@ -129,6 +129,10 @@ impl App {
                     self.effects_toast();
                 }
                 TrayCommand::Preset(name) => self.switch_preset(&name),
+                TrayCommand::Scenario(name) => {
+                    self.set_scenario(name.as_deref());
+                    self.toast(&format!("Bad mic & connection: {}", name.as_deref().unwrap_or("off")));
+                }
                 TrayCommand::Quit => {
                     self.system.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -139,9 +143,11 @@ impl App {
         let names: Vec<String> = self.presets.entries().iter().map(|e| e.preset.name.clone()).collect();
         let (effects_on, muted) = (!self.shared().bypass.load(Relaxed), self.shared().mute.load(Relaxed));
         let current = self.cfg.preset.clone();
+        let scenario = self.scenario_state();
         if let Some(tray) = &mut self.system.tray {
-            tray.sync(&names, current.as_deref(), effects_on, muted);
+            tray.sync(&names, current.as_deref(), effects_on, muted, scenario);
         }
+        self.end_glitch_only(ctx);
 
         self.save_if_due(ctx);
     }

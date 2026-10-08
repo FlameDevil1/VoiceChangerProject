@@ -1,4 +1,5 @@
-//! System tray icon: show the window, toggle effects/mute, switch presets, quit.
+//! System tray icon: show the window, toggle effects/mute, switch presets and bad mic /
+//! connection scenarios, quit.
 //!
 //! The tray's hidden window is pumped by the app's main event loop, so it must be created on the
 //! main thread. Events arrive through handlers that also wake the app (`request_repaint`), so they
@@ -15,6 +16,8 @@ pub enum TrayCommand {
     ToggleEffects,
     ToggleMute,
     Preset(String),
+    /// A bad mic / connection scenario by name; `None` = off.
+    Scenario(Option<String>),
     Quit,
 }
 
@@ -25,6 +28,7 @@ impl TrayCommand {
             TrayCommand::ToggleEffects => "toggle effects".into(),
             TrayCommand::ToggleMute => "toggle mute".into(),
             TrayCommand::Preset(p) => format!("preset {p}"),
+            TrayCommand::Scenario(s) => format!("scenario {}", s.as_deref().unwrap_or("off")),
             TrayCommand::Quit => "quit".into(),
         }
     }
@@ -35,6 +39,7 @@ const ID_EFFECTS: &str = "effects";
 const ID_MUTE: &str = "mute";
 const ID_QUIT: &str = "quit";
 const PRESET_PREFIX: &str = "preset:";
+const SCENARIO_PREFIX: &str = "scenario:";
 
 pub struct Tray {
     icon: TrayIcon,
@@ -42,8 +47,10 @@ pub struct Tray {
     mute: CheckMenuItem,
     voice: Submenu,
     presets: Vec<(String, CheckMenuItem)>,
+    /// "Off" first, then one item per scenario.
+    scenarios: Vec<(Option<&'static str>, CheckMenuItem)>,
     rx: Receiver<TrayCommand>,
-    last: (bool, bool, Option<String>),
+    last: (bool, bool, Option<String>, Option<Option<&'static str>>),
 }
 
 impl Tray {
@@ -53,6 +60,17 @@ impl Tray {
         let effects = CheckMenuItem::with_id(ID_EFFECTS, "Effects on", true, true, None);
         let mute = CheckMenuItem::with_id(ID_MUTE, "Mute virtual mic", true, false, None);
         let voice = Submenu::new("Voice", true);
+        let problems = Submenu::new("Bad mic & connection", true);
+        let names = std::iter::once(None).chain(voice_changer::presets::SCENARIOS.iter().map(|s| Some(s.name)));
+        let scenarios: Vec<_> = names
+            .map(|name| {
+                let id = format!("{SCENARIO_PREFIX}{}", name.unwrap_or(""));
+                (name, CheckMenuItem::with_id(id, name.unwrap_or("Off"), true, false, None))
+            })
+            .collect();
+        for (_, item) in &scenarios {
+            problems.append(item).ok()?;
+        }
         let quit = MenuItem::with_id(ID_QUIT, "Quit", true, None);
         menu.append_items(&[
             &show,
@@ -60,6 +78,7 @@ impl Tray {
             &effects,
             &mute,
             &voice,
+            &problems,
             &PredefinedMenuItem::separator(),
             &quit,
         ])
@@ -85,7 +104,10 @@ impl Tray {
                 ID_EFFECTS => Some(TrayCommand::ToggleEffects),
                 ID_MUTE => Some(TrayCommand::ToggleMute),
                 ID_QUIT => Some(TrayCommand::Quit),
-                _ => id.strip_prefix(PRESET_PREFIX).map(|n| TrayCommand::Preset(n.to_string())),
+                _ => match id.strip_prefix(SCENARIO_PREFIX) {
+                    Some(n) => Some(TrayCommand::Scenario(Some(n.to_string()).filter(|n| !n.is_empty()))),
+                    None => id.strip_prefix(PRESET_PREFIX).map(|n| TrayCommand::Preset(n.to_string())),
+                },
             };
             send(&menu_tx, cmd, &wake);
         }));
@@ -101,7 +123,16 @@ impl Tray {
             };
             send(&click_tx, cmd, &wake);
         }));
-        Some(Self { icon: tray, effects, mute, voice, presets: Vec::new(), rx, last: (true, false, None) })
+        Some(Self {
+            icon: tray,
+            effects,
+            mute,
+            voice,
+            presets: Vec::new(),
+            scenarios,
+            rx,
+            last: (true, false, None, None),
+        })
     }
 
     /// Commands since the last call.
@@ -109,9 +140,17 @@ impl Tray {
         self.rx.try_iter().collect()
     }
 
-    /// Reflect the app state in the menu (cheap when nothing changed).
-    pub fn sync(&mut self, names: &[String], current: Option<&str>, effects_on: bool, muted: bool) {
-        let state = (effects_on, muted, current.map(str::to_string));
+    /// Reflect the app state in the menu (cheap when nothing changed). `scenario`: `None` = custom
+    /// problems (nothing checked), `Some(None)` = off, `Some(Some(name))` = that scenario.
+    pub fn sync(
+        &mut self,
+        names: &[String],
+        current: Option<&str>,
+        effects_on: bool,
+        muted: bool,
+        scenario: Option<Option<&'static str>>,
+    ) {
+        let state = (effects_on, muted, current.map(str::to_string), scenario);
         let names_changed =
             self.presets.len() != names.len() || self.presets.iter().zip(names).any(|((n, _), m)| n != m);
         if names_changed {
@@ -129,6 +168,9 @@ impl Tray {
             self.mute.set_checked(muted);
             for (name, item) in &self.presets {
                 item.set_checked(Some(name.as_str()) == current);
+            }
+            for (name, item) in &self.scenarios {
+                item.set_checked(scenario == Some(*name));
             }
             let tip = match (current, effects_on, muted) {
                 (_, _, true) => "Voice Changer: muted".to_string(),

@@ -6,14 +6,17 @@ use super::effects::remember;
 use super::widgets::slider_row;
 use eframe::egui::{self, RichText};
 use std::sync::atomic::Ordering::Relaxed;
+use std::time::{Duration, Instant};
 use voice_changer::dsp::EffectKind;
+use voice_changer::dsp::fx::network::STATUS_BUSY;
 use voice_changer::presets::{PROBLEMS, SCENARIOS, clear_problems};
 
 impl App {
     pub(super) fn problems_section(&mut self, ui: &mut egui::Ui, advanced: bool) {
         let mut fx = self.cfg.fx.clone();
         let scenario = SCENARIOS.iter().find(|s| s.matches(&fx)).map(|s| s.name);
-        let any_on = PROBLEMS.iter().any(|&k| fx.enabled(k));
+        // A glitch-only bad connection is just playing a burst: still "off" to the user.
+        let any_on = PROBLEMS.iter().any(|&k| fx.enabled(k)) && self.glitch_only.is_none();
         let title = match (scenario, any_on) {
             (Some(name), _) => format!("Bad mic & connection: {name}"),
             (None, true) => "Bad mic & connection: custom".to_string(),
@@ -83,7 +86,8 @@ impl App {
     }
 
     /// A glitch burst was requested (the trigger is already bumped): make sure the bad connection
-    /// is on to play it. Turned on just for this, it runs with no random problems.
+    /// is on to play it. Turned on just for this, it runs with no random problems and turns itself
+    /// off again when the burst is over.
     pub(super) fn glitch_burst(&mut self) {
         let net = EffectKind::Network;
         if !self.cfg.fx.enabled(net) {
@@ -91,6 +95,49 @@ impl App {
             fx.set(net, "amount", 0.0);
             fx.set_enabled(net, true);
             self.set_fx(fx);
+            self.glitch_only = Some(Instant::now());
         }
+    }
+
+    /// Switch the glitch-only bad connection back off once its burst has played (unless you have
+    /// started using the effect for real in the meantime).
+    pub(super) fn end_glitch_only(&mut self, ctx: &egui::Context) {
+        let Some(started) = self.glitch_only else { return };
+        let net = EffectKind::Network;
+        if !self.cfg.fx.enabled(net) || self.cfg.fx.get(net, "amount") > 0.0 {
+            self.glitch_only = None;
+            return;
+        }
+        let busy = self.shared().fx.get(net).status.load(Relaxed) == STATUS_BUSY;
+        // Give the audio thread a moment to pick up the request before trusting "not busy";
+        // without audio running there is nothing to wait for.
+        let settled = started.elapsed() > Duration::from_millis(500) || !self.is_active();
+        if settled && !busy {
+            let mut fx = self.cfg.fx.clone();
+            fx.set_enabled(net, false);
+            self.set_fx(fx);
+            self.glitch_only = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
+    }
+
+    /// The scenario currently active for the tray: `Some(None)` = off, `None` = custom.
+    pub(super) fn scenario_state(&self) -> Option<Option<&'static str>> {
+        if !PROBLEMS.iter().any(|&k| self.cfg.fx.enabled(k)) || self.glitch_only.is_some() {
+            return Some(None);
+        }
+        SCENARIOS.iter().find(|s| s.matches(&self.cfg.fx)).map(|s| Some(s.name))
+    }
+
+    /// Load a scenario by name (`None` = off), as one undo step.
+    pub(super) fn set_scenario(&mut self, name: Option<&str>) {
+        let fx = match name.and_then(|n| SCENARIOS.iter().find(|s| s.name == n)) {
+            Some(s) => s.apply(&self.cfg.fx),
+            None => clear_problems(&self.cfg.fx),
+        };
+        remember(&mut self.fx_history, &self.cfg.fx);
+        self.glitch_only = None;
+        self.set_fx(fx);
     }
 }

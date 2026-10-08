@@ -69,6 +69,8 @@ pub struct App {
     rng: voice_changer::dsp::util::Rng,
     /// Undo steps for Randomize and preset clicks (newest last).
     fx_history: Vec<FxSettings>,
+    /// The bad connection was turned on only to play a glitch burst (since then).
+    glitch_only: Option<Instant>,
     /// Keeps this process the single running instance.
     _instance: crate::single_instance::Guard,
 }
@@ -132,6 +134,7 @@ impl App {
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64),
             ),
             fx_history: Vec::new(),
+            glitch_only: None,
             _instance: instance,
         };
         if check_updates {
