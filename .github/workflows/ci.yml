@@ -34,9 +34,21 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
+      - name: Build installer
+        id: installer
+        shell: pwsh
+        run: |
+          $setup = ./installer/build.ps1
+          "path=$setup" >> $env:GITHUB_OUTPUT
+
+      - name: Install, check and uninstall silently
+        shell: pwsh
+        run: ./installer/test-install.ps1 "${{ steps.installer.outputs.path }}"
+
       - uses: actions/upload-artifact@v7
         with:
           name: voicechanger-windows-x64
           path: |
             target/release/voicechanger.exe
             target/release/vcrender.exe
+            target/installer/*.exe

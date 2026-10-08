@@ -43,7 +43,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             let ctx = cc.egui_ctx.clone();
-            guard.listen(move || gui::bring_to_front(&ctx));
+            let quit_ctx = ctx.clone();
+            guard.listen(move || gui::bring_to_front(&ctx), move || gui::request_quit(&quit_ctx));
             Ok(Box::new(gui::App::new(cc, cfg, start_hidden, guard)))
         }),
     );

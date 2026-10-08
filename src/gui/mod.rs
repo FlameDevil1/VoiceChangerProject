@@ -81,6 +81,16 @@ pub struct App {
     _instance: crate::single_instance::Guard,
 }
 
+/// Set when the installer asks the app to quit (from another thread).
+static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Quit for real (not to the tray), saving settings as usual. Callable from any thread.
+pub fn request_quit(ctx: &egui::Context) {
+    log::info!("asked to quit (installer)");
+    QUIT_REQUESTED.store(true, Relaxed);
+    ctx.request_repaint();
+}
+
 /// Show, restore and focus the main window (another launch, tray click or hotkey asked for it).
 pub fn bring_to_front(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -753,6 +763,10 @@ impl App {
 impl eframe::App for App {
     /// Runs before every frame and on wake-ups while hidden (hotkeys, tray).
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if QUIT_REQUESTED.load(Relaxed) && !self.system.quitting {
+            self.system.quitting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if self.hide_frames > 0 {
             self.hide_frames -= 1;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));

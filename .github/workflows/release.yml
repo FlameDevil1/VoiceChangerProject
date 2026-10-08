@@ -1,6 +1,7 @@
-# Publishes a GitHub release with ready-to-run binaries when a version tag is pushed:
+# Publishes a GitHub release with the installer and a portable zip when a version tag is pushed:
 #   git tag v0.2.0 && git push origin v0.2.0
-# The tag must match the version in Cargo.toml.
+# The tag must match the version in Cargo.toml. Release notes come from
+# .github/release-notes/<tag>.md when that file exists, else from the commit list.
 name: Release
 
 on:
@@ -34,10 +35,18 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Package
+      - name: Installer
         shell: pwsh
         run: |
-          $dir = "VoiceChanger-$env:GITHUB_REF_NAME-windows-x64"
+          $setup = ./installer/build.ps1
+          ./installer/test-install.ps1 $setup
+          Copy-Item $setup .
+
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $dir = "VoiceChanger-$version-portable"
           New-Item -ItemType Directory $dir | Out-Null
           Copy-Item target/release/voicechanger.exe, target/release/vcrender.exe, README.md, LICENSE $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
@@ -47,5 +56,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" "VoiceChanger-${GITHUB_REF_NAME}-windows-x64.zip" \
-            --title "Voice Changer ${GITHUB_REF_NAME}" --generate-notes
+          version="${GITHUB_REF_NAME#v}"
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then notes_args=(--notes-file "$notes"); else notes_args=(--generate-notes); fi
+          gh release create "${GITHUB_REF_NAME}" \
+            "VoiceChanger-Setup-${version}.exe" "VoiceChanger-${version}-portable.zip" \
+            --title "Voice Changer ${GITHUB_REF_NAME}" "${notes_args[@]}"
